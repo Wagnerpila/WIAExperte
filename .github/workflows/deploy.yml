@@ -1,0 +1,32 @@
+name: Testes e deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest httpx
+      - run: python -m pytest -q
+
+  deploy:
+    needs: testes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar deploy no Easypanel
+        env:
+          DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_URL }}
+        run: |
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "::warning::Secret EASYPANEL_DEPLOY_URL não configurado; deploy não disparado."
+            exit 0
+          fi
+          curl -fsS -m 60 -X POST "$DEPLOY_URL" > /dev/null
+          echo "Deploy disparado."

@@ -29,7 +29,7 @@ App do tipo **App** com origem neste repositório (branch `main`), construído p
 - Porta do domínio: `8000`.
 - Volume (montagem) em `/data`, onde ficam o banco e os arquivos.
 - Variáveis de ambiente: as do `.env.example`, sem `WIA_DOMINIO`. O HTTPS é feito pelo Traefik do Easypanel.
-- Deploy automático: cada `git push` na `main` dispara o *deploy webhook* do app.
+- Deploy automático: cada `git push` na `main` roda os testes no GitHub Actions (`.github/workflows/deploy.yml`) e, se passarem, chama o gatilho de implantação do Easypanel. A URL do gatilho fica no secret `EASYPANEL_DEPLOY_URL` do repositório (Settings → Secrets and variables → Actions), nunca no código.
 
 Criar usuário no container: `docker exec -it $(docker ps -qf name=n8n_wia-expert) python -m app.cli criar-usuario seu.nome --admin`
 
