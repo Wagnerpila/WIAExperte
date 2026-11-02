@@ -56,6 +56,9 @@ Use esta opção só numa VPS que não tenha outro proxy ocupando as portas 80/4
 | Material | Como exportar | Tipo no upload |
 |---|---|---|
 | Manuais, P&IDs, descritivos, listas de I/O | PDF com texto (PDF escaneado precisa de OCR antes) | Documentação |
+| Documentos de projeto (listas de I/O, cabos, materiais) | Planilhas `.xlsx`/`.xlsm`/`.xls` como vieram: o cabeçalho (inclusive grupos mesclados) é detectado e cada linha vira "Coluna: valor"; as abas auxiliares do modelo Klabin (Status, Areas, Disciplinas, Tipodoc) são ignoradas e a Capa vira a ficha | Documentação |
+| Desenhos AutoCAD | `.dwg` (lido com a LibreDWG `dwg2dxf`, já incluída na imagem Docker) ou `.dxf`: textos, MTEXT, tabelas e atributos de blocos (carimbo, tags). Sem posição na folha | Documentação |
+| Desenhos Visio | `.vsdx`: texto e dados de forma (código do item, fornecedor, tags) por página | Documentação |
 | Programa Siemens (TIA Portal) | Exportar blocos como fonte (SCL/STL) ou XML via Openness; tabelas de tags em XLSX → CSV | Backup |
 | Programa Schneider (Control Expert) | Exportar seções/DFBs em `.xef`/`.zef` (o `.xef` é XML legível); variáveis em `.xsy`/CSV | Backup |
 | Valmet DNA | Relatórios e listas do DNA Explorer, impressões/PDF dos diagramas do FbCAD, listas de tags | Backup / Documentação |
@@ -100,6 +103,7 @@ app/
   agent.py     loop de ferramentas do Claude (buscar_base, ler_documento, listar_documentos,
                consultar_ocorrencias, consultar_alarmes, salvar_nota, registrar_ocorrencia, glossario)
   ingest.py    leitura de PDF/texto/WhatsApp/WAHA/ZIP/CSV, trechos, versões
+  leitores.py  planilhas (xlsx/xls), Visio (vsdx), AutoCAD (dwg/dxf) e código de documento Klabin
   painel.py    cálculo dos indicadores
   llm.py       cliente Anthropic, descrição de fotos, registro de uso
   db.py        esquema SQLite + FTS5
@@ -109,6 +113,8 @@ prompts/system_prompt.md   prompt de sistema (v2 + seção de ferramentas)
 ```
 
 Importar uma pasta inteira de uma vez: `python -m app.cli importar "D:\\Backups\\Caldeira" --tipo backup --plataforma "Valmet DNA" --area "Caldeira de recuperação"`.
+
+Documentos com código Klabin no nome (ex. `34231-I-LIO-00117-0001.xlsx`) ganham uma ficha (máquina — 341xx = MP27, 342xx = MP28 —, área, disciplina, tipo) e um rótulo em cada trecho, e a área do documento é preenchida sozinha. Arquivos com conteúdo idêntico a um já indexado (ex.: o mesmo PDF solto e dentro de um `.zip`) ficam com status `duplicado` e não são indexados de novo. Para ler `.dwg` fora do Docker, instale a LibreDWG (`dwg2dxf` no PATH); sem ela o DWG fica `pendente` e pode ser reprocessado depois.
 
 ## Decisões técnicas
 

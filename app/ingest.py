@@ -13,7 +13,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db
+from . import config, db, leitores
 
 log = logging.getLogger("wia.ingest")
 
@@ -27,6 +27,9 @@ EXT_IMAGEM = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 EXT_AUDIO = {".ogg", ".opus", ".mp3", ".m4a", ".wav", ".aac", ".amr"}
 EXT_VIDEO = {".mp4", ".mov", ".3gp", ".avi", ".mkv", ".webm"}
 EXT_PDF = {".pdf"}
+EXT_PLANILHA = {".xlsx", ".xlsm", ".xls"}
+EXT_VISIO = {".vsdx", ".vsdm"}
+EXT_CAD = {".dwg", ".dxf"}
 # Arquivos de projeto binários: guardados, mas não dá para ler a lógica sem exportar.
 EXT_PROJETO = {".ap13", ".ap14", ".ap15", ".ap16", ".ap17", ".ap18", ".ap19", ".ap20",
                ".zap13", ".zap14", ".zap15", ".zap16", ".zap17", ".zap18", ".zap19", ".zap20",
@@ -122,7 +125,7 @@ def inferir_tipo(nome: str) -> str:
         return "video"
     if ext in EXT_PROJETO:
         return "backup"
-    if ext == ".pdf":
+    if ext in EXT_PDF | EXT_PLANILHA | EXT_VISIO | EXT_CAD:
         return "documentacao"
     if ext in {".scl", ".awl", ".stl", ".st", ".udt", ".db", ".l5x", ".l5k", ".xef", ".pou", ".exp"}:
         return "backup"
@@ -223,16 +226,29 @@ def trechos_de_mensagens(msgs: list[dict]) -> list[tuple[str, str, str | None]]:
 
 
 def trechos_pdf(path: Path) -> list[tuple[str, str, str | None]]:
-    from pypdf import PdfReader
+    from pypdf import PdfReader, apply_configuration
 
-    reader = PdfReader(str(path))
-    out = []
-    for n, page in enumerate(reader.pages, start=1):
-        txt = (page.extract_text() or "").strip()
-        if not txt:
-            continue
-        for k, (t, _, _) in enumerate(trechos_de_linhas(txt)):
-            out.append((t, f"página {n}" + (f" (parte {k + 1})" if k else ""), None))
+    # Diagramas exportados do Visio (arquiteturas de rede) passam do limite padrão de 2 milhões de
+    # tokens por página; 10x ainda protege contra PDF malicioso.
+    with apply_configuration(stream_parsing_work_maximum_count=20_000_000):
+        reader = PdfReader(str(path))
+        if reader.is_encrypted:
+            reader.decrypt("")  # PDFs só com restrição de impressão/cópia abrem com senha vazia
+        out = []
+        falhas = []
+        for n, page in enumerate(reader.pages, start=1):
+            try:
+                txt = (page.extract_text() or "").strip()
+            except Exception as e:  # uma página ruim não derruba o documento inteiro
+                log.warning("PDF %s: falha ao ler a página %s: %s", path.name, n, e)
+                falhas.append(n)
+                continue
+            if not txt:
+                continue
+            for k, (t, _, _) in enumerate(trechos_de_linhas(txt)):
+                out.append((t, f"página {n}" + (f" (parte {k + 1})" if k else ""), None))
+    if falhas and not out:
+        raise ValueError(f"não foi possível ler nenhuma página (falhas nas páginas {falhas[:10]})")
     return out
 
 
@@ -482,6 +498,39 @@ def _transcrever_audio(path: Path) -> str | None:
     return "\n".join(f"[{s.start:6.1f}s] {s.text.strip()}" for s in segmentos)
 
 
+def contextualizar_klabin(trechos: list[tuple[str, str, str | None]], info: dict,
+                          nome: str) -> list[tuple[str, str, str | None]]:
+    """Põe a ficha do documento no início e o rótulo (código · máquina · tipo) em cada trecho."""
+    rotulo = leitores.rotulo_documento(info)
+    return ([(leitores.ficha_documento(info, nome), "ficha do documento", None)]
+            + [(f"{rotulo}\n{t}", loc, ts) for t, loc, ts in trechos])
+
+
+def _area_da_capa(trechos: list[tuple[str, str, str | None]]) -> str | None:
+    """Usa o campo 'Área:' da capa das planilhas Klabin, se houver (ex. '34231 - SDCD, ...')."""
+    for t, _, _ in trechos[:3]:
+        m = re.search(r"^Área: (3\d{4} - .+)$", t, re.M)
+        if m:
+            info = leitores.identificar_documento(t)
+            maq = info.get("maquina") if info else None
+            nome = m.group(1).strip()
+            return nome + (f" ({maq})" if maq and maq not in nome else "")
+    return None
+
+
+def _definir_area(conn, doc_id: int, info: dict, da_capa: str | None) -> None:
+    """Preenche a área do documento. O nome da área vem da capa das planilhas Klabin; quando um
+    documento não tem capa, reaproveita o nome já aprendido de outro documento da mesma área."""
+    curta = leitores.area_documento(info)
+    if da_capa:
+        conn.execute("UPDATE documentos SET area = ? WHERE id = ?", (da_capa, doc_id))
+        conn.execute("UPDATE documentos SET area = ? WHERE area = ?", (da_capa, curta))  # corrige os anteriores
+        return
+    conhecida = conn.execute("SELECT area FROM documentos WHERE area LIKE ? AND id != ? LIMIT 1",
+                             (f"{info['area']} - %", doc_id)).fetchone()
+    conn.execute("UPDATE documentos SET area = ? WHERE id = ?", (conhecida[0] if conhecida else curta, doc_id))
+
+
 def processar_documento(doc_id: int) -> None:
     """Extrai texto do arquivo e grava os trechos. Erros ficam registrados no documento."""
     with db.session() as conn:
@@ -494,23 +543,27 @@ def processar_documento(doc_id: int) -> None:
         trechos: list[tuple[str, str, str | None]] = []
         with db.session() as conn:
             dup = conn.execute(
-                "SELECT id, nome FROM documentos WHERE sha256 = ? AND id != ? AND status != 'erro' LIMIT 1",
+                "SELECT id, nome FROM documentos WHERE sha256 = ? AND id != ?"
+                " AND status NOT IN ('erro', 'duplicado', 'processando') ORDER BY id LIMIT 1",
                 (doc["sha256"], doc_id)).fetchone()
-            if dup:
-                observ = f"conteúdo idêntico ao documento #{dup['id']} ({dup['nome']})"
 
-        if ext == ".zip":
+        if dup:
+            # Mesmo conteúdo já indexado (ex.: arquivo solto + o mesmo dentro de um .zip): não repete
+            # os trechos, senão a busca devolve o mesmo resultado duas vezes.
+            status = "duplicado"
+            observ = f"conteúdo idêntico ao documento #{dup['id']} ({dup['nome']}); não indexado de novo"
+        elif ext == ".zip":
             filhos = _extrair_zip(doc, path)
             trechos = [(f"Arquivo compactado com {len(filhos)} arquivos.", "zip", None)]
         elif doc["tipo"] == "alarmes":
-            texto = ler_texto(path)
+            texto = leitores.planilha_para_csv(path) if ext in EXT_PLANILHA else ler_texto(path)
             with db.session() as conn:
                 conn.execute("DELETE FROM alarmes WHERE doc_id = ?", (doc_id,))
                 n = importar_alarmes(conn, doc_id, texto)
             observ = f"{n} eventos de alarme importados"
             trechos = trechos_de_linhas(texto)
         elif doc["tipo"] == "ocorrencias":
-            texto = ler_texto(path)
+            texto = leitores.planilha_para_csv(path) if ext in EXT_PLANILHA else ler_texto(path)
             with db.session() as conn:
                 n = importar_ocorrencias_csv(conn, doc_id, texto, doc["enviado_por"])
             observ = f"{n} ocorrências importadas"
@@ -518,7 +571,27 @@ def processar_documento(doc_id: int) -> None:
         elif ext in EXT_PDF:
             trechos = trechos_pdf(path)
             if not trechos:
-                status, observ = "sem_texto", "PDF sem texto extraível (provavelmente escaneado; precisa de OCR)"
+                status, observ = "sem_texto", ("PDF sem texto extraível (escaneado ou com o texto convertido "
+                                               "em linhas; envie o DWG de mesmo nome, se houver, ou faça OCR)")
+            elif sum(len(t[0]) for t in trechos) < 200:
+                observ = ("PDF com pouco texto (desenho com textos convertidos em linhas?); "
+                          "o DWG de mesmo nome costuma ter as tags")
+        elif ext in EXT_PLANILHA:
+            trechos = leitores.trechos_planilha(path)
+            if not trechos:
+                status, observ = "sem_texto", "planilha vazia"
+        elif ext in EXT_VISIO:
+            trechos = leitores.trechos_visio(path)
+            if not trechos:
+                status, observ = "sem_texto", "desenho Visio sem textos"
+        elif ext == ".dwg" and not leitores.conversor_dwg():
+            status = "pendente"
+            observ = ("DWG guardado; falta o conversor LibreDWG (dwg2dxf) neste servidor para ler os textos. "
+                      "Depois de instalar, use 'reprocessar pendentes'")
+        elif ext in EXT_CAD:
+            trechos = leitores.trechos_dwg(path) if ext == ".dwg" else leitores.trechos_dxf(path)
+            if not trechos:
+                status, observ = "sem_texto", "desenho sem textos (só geometria)"
         elif ext in EXT_IMAGEM:
             if config.DESCRIBE_IMAGES:
                 from .llm import descrever_imagem
@@ -555,8 +628,13 @@ def processar_documento(doc_id: int) -> None:
         else:
             status, observ = "nao_suportado", f"extensão {ext or '(nenhuma)'} sem leitor de texto"
 
+        info = leitores.identificar_documento(doc["nome"])
+        if info and trechos and status != "duplicado":
+            trechos = contextualizar_klabin(trechos, info, doc["nome"])
         with db.session() as conn:
             gravar_trechos(conn, doc_id, trechos)
+            if info and not doc.get("area"):
+                _definir_area(conn, doc_id, info, _area_da_capa(trechos))
     except Exception as e:  # registra o erro no documento
         log.exception("falha ao processar documento %s", doc_id)
         status, erro = "erro", f"{type(e).__name__}: {e}"[:500]
