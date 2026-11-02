@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import agent, auth, config, db, ingest, painel
+from . import agent, auth, config, db, enderecos, ingest, painel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -25,6 +25,7 @@ STATIC = Path(__file__).parent / "static"
 
 db.init_db()
 auth.garantir_admin_do_ambiente()
+enderecos.indexar_em_segundo_plano()  # planilhas da base que ainda não passaram pelo leitor de I/O
 app = FastAPI(title="WIA Expert", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(SessionMiddleware, secret_key=auth.carregar_secret(), session_cookie="wia_sessao",
                    max_age=12 * 3600, same_site="strict", https_only=config.COOKIE_SECURE)
@@ -165,7 +166,7 @@ def _versao_estatico(nome: str) -> str:
 
 
 # Cada deploy muda o "?v=" dos arquivos da interface: o navegador nunca fica com o JS antigo.
-_INDEX_HTML = re.sub(r'(/static/(app\.js|graficos\.js|style\.css))"',
+_INDEX_HTML = re.sub(r'(/static/(app\.js|graficos\.js|remotas\.js|style\.css))"',
                      lambda m: f'{m.group(1)}?v={_versao_estatico(m.group(2))}"',
                      (STATIC / "index.html").read_text(encoding="utf-8"))
 
@@ -466,6 +467,43 @@ def ver_painel(dias: int | None = 90, u: dict = Usuario):
         dias = None
     with db.session() as conn:
         return painel.montar(conn, dias)
+
+
+# --------------------------------------------------------------------------- remotas / endereçamento de I/O
+
+@app.get("/api/remotas")
+def painel_remotas(u: dict = Usuario):
+    with db.session() as conn:
+        return enderecos.painel(conn)
+
+
+@app.get("/api/remotas/{remota_id}")
+def ver_remota(remota_id: str, u: dict = Usuario):
+    with db.session() as conn:
+        r = enderecos.remota(conn, remota_id)
+    if r is None:
+        raise HTTPException(404, "remota não encontrada")
+    return r
+
+
+@app.get("/api/io")
+def buscar_io(q: str = "", area: str | None = None, tipo: str | None = None, remota: str | None = None,
+              limite: int = 500, u: dict = Usuario):
+    with db.session() as conn:
+        return enderecos.buscar_pontos(conn, q, area or None, tipo or None, remota or None, limite)
+
+
+@app.post("/api/remotas/importar")
+async def importar_remotas(arquivo: UploadFile = File(...), u: dict = Usuario):
+    bruto = await arquivo.read(64 * 1024 * 1024 + 1)
+    if len(bruto) > 64 * 1024 * 1024:
+        raise HTTPException(413, "arquivo maior que 64 MB")
+    return enderecos.importar_remotas_puma(bruto.decode("utf-8-sig", errors="replace"))
+
+
+@app.post("/api/remotas/reindexar")
+def reindexar_io(u: dict = Usuario):
+    return {"iniciado": enderecos.indexar_em_segundo_plano(todos=True)}
 
 
 @app.exception_handler(ValueError)

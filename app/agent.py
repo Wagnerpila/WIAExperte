@@ -9,7 +9,7 @@ from pathlib import Path
 
 import anthropic
 
-from . import config, db, greendocs, ingest
+from . import config, db, enderecos, greendocs, ingest
 from .llm import client, image_block, registrar_uso, request_kwargs
 
 log = logging.getLogger("wia.agent")
@@ -143,6 +143,24 @@ TOOLS: list[dict] = [
                 "significado": {"type": "string"},
             },
             "required": ["acao"],
+        },
+    },
+    {
+        "name": "endereco_io",
+        "description": (
+            "Endereçamento de I/O estruturado: para uma tag (ou parte dela), remota/gabinete, caixa de junção ou "
+            "modelo de cartão, devolve remota, cartão/slot, canal, borneira, caixa de junção e borne, controlador, "
+            "tipo (DI/DO/AI/AO/RTD-TC) e a lista de origem. Vem do cadastro de remotas da Unidade Puma e das "
+            "listas de I/O em planilha da base. Use SEMPRE que a pergunta envolver onde um ponto está ligado; "
+            "a interface mostra cada ponto como um card. Complete com buscar_base para desenhos e manuais."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "consulta": {"type": "string", "description": "Tag, remota, JB ou cartão, ex.: '34221RNF-30101-VT1', "
+                                                              "'34231-RIO-27760', 'JB28010'. Vários termos = todos."},
+                "limite": {"type": "integer", "minimum": 1, "maximum": 60, "description": "Máximo de pontos (padrão 20)."},
+            },
+            "required": ["consulta"],
         },
     },
 ]
@@ -346,7 +364,14 @@ def t_baixar_greendocs(conn, args: dict, usuario: str) -> dict:
     return res
 
 
+def t_endereco_io(conn, args: dict, usuario: str) -> dict:
+    res = enderecos.endereco(conn, str(args.get("consulta") or ""), _limite(args, 20, 60))
+    res["aviso"] = AVISO_DADOS
+    return res
+
+
 EXECUTORES = {
+    "endereco_io": t_endereco_io,
     "buscar_greendocs": t_buscar_greendocs,
     "baixar_greendocs": t_baixar_greendocs,
     "buscar_base": t_buscar_base,
@@ -380,6 +405,8 @@ def _resumo_ferramenta(nome: str, args: dict, res: dict) -> str:
     if nome == "baixar_greendocs":
         ok = [b["nome"] for b in res.get("baixados", []) if not b.get("erro")]
         return f"baixou do GreenDocs: {', '.join(ok) or 'nada'}"
+    if nome == "endereco_io":
+        return f"endereçamento de “{args.get('consulta', '')}” ({len(res.get('pontos', []))} pontos)"
     if nome == "glossario":
         return f"glossário: {args.get('acao')} {args.get('termo') or ''}".strip()
     return nome
@@ -396,7 +423,7 @@ def executar_ferramenta(nome: str, args: dict, usuario: str, conversa_id: int) -
             raise ValueError("entrada da ferramenta deve ser um objeto JSON")
         with db.session() as conn:
             res = fn(conn, args, usuario)
-        n = len(res.get("resultados") or res.get("documentos") or res.get("baixados") or res.get("ocorrencias")
+        n = len(res.get("resultados") or res.get("pontos") or res.get("documentos") or res.get("baixados") or res.get("ocorrencias")
                 or res.get("eventos") or res.get("termos") or [])
         resumo = _resumo_ferramenta(nome, args, res)
         saida = json.dumps(res, ensure_ascii=False, default=str)
@@ -487,7 +514,13 @@ def responder(conversa_id: int, usuario: str, texto: str, imagens: list[Path] | 
         resultados = []
         for u in usos:
             saida, ok, resumo = executar_ferramenta(u.name, u.input, usuario, conversa_id)
-            ferramentas.append({"nome": u.name, "resumo": resumo, "ok": ok})
+            item = {"nome": u.name, "resumo": resumo, "ok": ok}
+            if ok and u.name == "endereco_io":  # cards de endereçamento na interface
+                try:
+                    item["cartoes"] = [enderecos.cartao_visual(p) for p in json.loads(saida).get("pontos", [])[:12]]
+                except (ValueError, AttributeError):
+                    pass
+            ferramentas.append(item)
             bloco = {"type": "tool_result", "tool_use_id": u.id, "content": saida}
             if not ok:
                 bloco["is_error"] = True

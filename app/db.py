@@ -221,6 +221,8 @@ def init_db(path: Path | None = None) -> None:
     config.FILES_DIR.mkdir(parents=True, exist_ok=True)
     with session(p) as conn:
         conn.executescript(SCHEMA)
+        from . import enderecos  # import tardio: enderecos usa db
+        enderecos.garantir_tabelas(conn)
 
 
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)

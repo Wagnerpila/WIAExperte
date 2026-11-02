@@ -730,6 +730,12 @@ def processar_documento(doc_id: int) -> None:
     with db.session() as conn:
         conn.execute("UPDATE documentos SET status = ?, erro = ?, observacao = COALESCE(?, observacao)"
                      " WHERE id = ?", (status, erro, observ, doc_id))
+    if status == "ok" and ext in EXT_PLANILHA:
+        try:  # lista de I/O: endereçamento para o dashboard de remotas e para o assistente
+            from . import enderecos
+            enderecos.indexar_documento(doc_id)
+        except Exception:
+            log.exception("falha ao ler o endereçamento de I/O do documento %s", doc_id)
     for f in filhos:
         processar_documento(f)
 

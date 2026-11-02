@@ -8,6 +8,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" defer></script>
   <script src="/static/graficos.js" defer></script>
+  <script src="/static/remotas.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -33,6 +34,7 @@
     <nav class="abas" role="tablist">
       <button role="tab" data-aba="chat" aria-selected="true">Chat</button>
       <button role="tab" data-aba="painel" aria-selected="false">Painel</button>
+      <button role="tab" data-aba="remotas" aria-selected="false">Remotas</button>
       <button role="tab" data-aba="base" aria-selected="false">Base</button>
       <button role="tab" data-aba="ocorrencias" aria-selected="false">Ocorrências</button>
       <button role="tab" data-aba="glossario" aria-selected="false">Glossário e notas</button>
@@ -83,6 +85,33 @@
         <button class="btn" id="btn-atualizar-painel">Atualizar</button>
       </div>
       <div id="painel-conteudo"></div>
+    </section>
+
+    <!-- ---------- REMOTAS -->
+    <section id="aba-remotas" data-painel="remotas" class="hidden pilha">
+      <div class="filtros">
+        <h2 style="margin-right:auto">Remotas e endereçamento de I/O</h2>
+        <span class="muted small" id="rem-gerado"></span>
+        <button class="btn" id="rem-importar" type="button" title="Arquivo data.js do projeto RemotasPuma">Importar cadastro</button>
+        <input type="file" id="rem-arquivo" accept=".js,.json" hidden>
+        <button class="btn" id="rem-reler" type="button" title="Relê as listas de I/O em planilha que estão na base">Reler planilhas</button>
+        <button class="btn" id="rem-atualizar" type="button">Atualizar</button>
+      </div>
+      <div class="filtros">
+        <input type="text" id="rem-busca" placeholder="Buscar tag, remota, JB, cartão, descrição…" style="max-width:340px">
+        <select id="rem-area" style="max-width:220px"><option value="">Todas as áreas</option></select>
+        <select id="rem-tipo" style="max-width:150px"><option value="">Todos os tipos</option>
+          <option>DI</option><option>DO</option><option>AI</option><option>AO</option><option>RTD/TC</option></select>
+        <select id="rem-ocup" style="max-width:200px"><option value="">Qualquer ocupação</option>
+          <option value="critica">Ocupação ≥ 90%</option><option value="reserva">Abaixo da reserva</option>
+          <option value="semcap">Sem capacidade cadastrada</option></select>
+        <button class="btn mini" id="rem-limpar" type="button">Limpar</button>
+        <div class="segmentado" id="rem-vista" role="group" aria-label="Visualização" style="margin-left:auto">
+          <button data-vista="remotas" aria-pressed="true" type="button">Remotas</button>
+          <button data-vista="pontos" aria-pressed="false" type="button">Pontos de I/O</button>
+        </div>
+      </div>
+      <div id="remotas-conteudo"></div>
     </section>
 
     <!-- ---------- BASE -->

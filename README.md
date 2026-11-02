@@ -82,6 +82,16 @@ Nada é baixado em massa. Quando a base não tem a resposta, o assistente usa `b
 - Testar pelo terminal: `python -m app.cli greendocs-buscar "34221RNF-30101-VT1"` e `python -m app.cli greendocs-baixar 34231-I-LIO-00117-0001`.
 - Fora do Docker: `pip install -r requirements.txt` e `python -m playwright install --only-shell chromium`.
 
+## Remotas e endereçamento de I/O
+
+A aba **Remotas** é um dashboard do endereçamento: indicadores (remotas, pontos, ocupação geral, canais livres, remotas ≥ 90%, abaixo da reserva), pontos por área e por tipo de sinal, faixas de ocupação, cards de cada remota (anel de ocupação, composição DI/DO/AI/AO/RTD-TC) e o detalhe com capacidade instalada, mapa de cartões e a lista de pontos. No chat, a ferramenta `endereco_io` mostra cada ponto como um card com a cadeia caixa de junção → remota → cartão → canal → controlador.
+
+Fontes (tabela `io_pontos`):
+- **Cadastro RemotasPuma**: botão *Importar cadastro* na aba Remotas com o `data.js` do projeto RemotasPuma (ou `python -m app.cli importar-remotas data.js`). Traz as 230 remotas da Unidade Puma com capacidade instalada e reserva. Reimportar substitui o cadastro anterior.
+- **Listas de I/O em planilha da base**: toda planilha que entra na base passa pelo leitor de I/O, que reconhece pelo cabeçalho as colunas de tag, remota/gabinete, cartão/slot, canal, borneira, caixa de junção e borne, controlador e tipo. As que já estavam na base são lidas sozinhas na inicialização; *Reler planilhas* (ou `python -m app.cli indexar-io --todos`) relê todas. Um ponto que aparece em mais de uma lista conta uma vez só, com as duas fontes.
+
+Os dados da planta ficam só no volume `/data`; nada disso vai para o repositório.
+
 ## Indicadores do painel
 
 **Base**: documentos por tipo, plataforma e área; envios por semana; pendências (erro, PDF sem texto, aguardando transcrição, binário).

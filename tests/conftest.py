@@ -21,7 +21,7 @@ def banco_limpo():
     if config.DB_PATH.exists():
         with db.session() as conn:
             for t in ["trechos", "documentos", "ocorrencias", "notas", "glossario", "alarmes", "conversas",
-                      "uso_api", "ferramentas_log", "usuarios"]:
+                      "uso_api", "ferramentas_log", "usuarios", "io_pontos", "remotas", "io_docs"]:
                 conn.execute(f"DELETE FROM {t}")
     db.init_db()
     yield

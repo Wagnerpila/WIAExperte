@@ -34,6 +34,7 @@
     $("#dialogo").showModal();
   }
   $("#dialogo-fechar").addEventListener("click", () => $("#dialogo").close());
+  window.Remotas.init({ api, dialogo });
 
   // ------------------------------------------------------------------ tema
   function aplicarTema(t) { if (t) document.documentElement.setAttribute("data-theme", t); }
@@ -74,6 +75,7 @@
     $$("nav.abas button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.aba === aba)));
     $$("[data-painel]").forEach((s) => s.classList.toggle("hidden", s.dataset.painel !== aba));
     if (aba === "painel") carregarPainel();
+    if (aba === "remotas") window.Remotas.carregar();
     if (aba === "base") carregarDocs();
     if (aba === "ocorrencias") carregarOcorrencias();
     if (aba === "glossario") carregarGlossario();
@@ -116,7 +118,13 @@
       ? `<div class="ferramentas">${m.ferramentas.map((f) => `<span>${f.ok ? "🔎" : "⚠️"} ${esc(f.resumo)}</span>`).join("")}</div>` : "";
     const anexos = (m.anexos || []).length ? `<div class="anexos">📎 ${m.anexos.map((a) => esc(a.nome)).join(", ")}</div>` : "";
     const corpo = m.papel === "assistant" ? markdown(m.texto) : esc(m.texto);
-    return `<div class="msg ${m.papel}"><div class="quem">${m.papel === "assistant" ? "Assistente" : "Você"} · ${dataBR(m.criada_em)}</div>${ferr}<div class="corpo">${corpo}</div>${anexos}</div>`;
+    const vistos = new Set();
+    const cartoes = (m.ferramentas || []).flatMap((f) => f.cartoes || []).filter((p) => {
+      const k = [p.tag, p.remota, p.slot, p.canal].join("|");
+      return vistos.has(k) ? false : (vistos.add(k), true);
+    }).slice(0, 12);
+    const cards = cartoes.length ? window.Remotas.cardsEndereco(cartoes) : "";
+    return `<div class="msg ${m.papel}"><div class="quem">${m.papel === "assistant" ? "Assistente" : "Você"} · ${dataBR(m.criada_em)}</div>${ferr}${cards}<div class="corpo">${corpo}</div>${anexos}</div>`;
   }
 
   function renderMensagens(msgs) {
@@ -129,6 +137,7 @@
       return;
     }
     box.innerHTML = msgs.map(htmlMensagem).join("");
+    window.Remotas.ligarCards(box);
     box.scrollTop = box.scrollHeight;
   }
 
@@ -168,6 +177,7 @@
       const r = await api(`/api/conversas/${estado.conversa}/mensagens`, { method: "POST", body: fd });
       $("#digitando")?.remove();
       box.insertAdjacentHTML("beforeend", htmlMensagem({ papel: "assistant", texto: r.texto, ferramentas: r.ferramentas, criada_em: new Date().toISOString() }));
+      window.Remotas.ligarCards(box.lastElementChild);
       box.scrollTop = box.scrollHeight;
       carregarConversas();
     } catch (err) {

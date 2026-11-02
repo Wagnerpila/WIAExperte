@@ -6,6 +6,8 @@
     python -m app.cli apagar-duplicados
     python -m app.cli greendocs-buscar <termo> [--so-descricao]
     python -m app.cli greendocs-baixar <nome-do-documento> [...]
+    python -m app.cli importar-remotas <data.js do projeto RemotasPuma>
+    python -m app.cli indexar-io [--todos]
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ import argparse
 import getpass
 from pathlib import Path
 
-from . import auth, db, greendocs, ingest
+from . import auth, db, enderecos, greendocs, ingest
 
 
 def main() -> None:
@@ -40,6 +42,10 @@ def main() -> None:
     gb.add_argument("--so-descricao", action="store_true", help="não procurar dentro dos arquivos")
     gd = sub.add_parser("greendocs-baixar", help="baixa documentos do GreenDocs para a base (após uma busca)")
     gd.add_argument("nomes", nargs="+")
+    ir = sub.add_parser("importar-remotas", help="importa o cadastro de remotas (data.js do RemotasPuma)")
+    ir.add_argument("arquivo")
+    ii = sub.add_parser("indexar-io", help="lê o endereçamento de I/O das planilhas da base")
+    ii.add_argument("--todos", action="store_true", help="relê também as planilhas já lidas")
 
     a = ap.parse_args()
     if a.cmd == "criar-usuario":
@@ -83,6 +89,12 @@ def main() -> None:
     elif a.cmd == "apagar-duplicados":
         r = ingest.apagar_duplicados()
         print(f"{r['apagados']} duplicado(s) apagado(s), {r['bytes'] / 1e6:.1f} MB liberados")
+    elif a.cmd == "importar-remotas":
+        r = enderecos.importar_remotas_puma(Path(a.arquivo).read_text(encoding="utf-8-sig", errors="replace"))
+        print(f"{r['remotas']} remotas e {r['pontos']} pontos importados (cadastro de {r['gerado_em']})")
+    elif a.cmd == "indexar-io":
+        r = enderecos.indexar_pendentes(todos=a.todos)
+        print(f"{r['planilhas']} planilha(s) lidas, {r['com_pontos']} com pontos de I/O, {r['pontos']} pontos")
 
 
 if __name__ == "__main__":
