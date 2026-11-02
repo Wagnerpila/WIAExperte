@@ -202,3 +202,13 @@ def test_envio_em_partes_de_outro_usuario(cli):
     c2.post("/api/login", json={"usuario": "outro2", "senha": "outra-senha-longa"})
     assert c2.put(f"/api/envios/{eid}?offset=0", content=b"abc").status_code == 404
     assert c2.put("/api/envios/..%2F..%2Fwia?offset=0", content=b"abc").status_code == 404
+
+
+def test_index_com_versao_nos_estaticos(cli):
+    r = cli.get("/")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    import re
+    versoes = re.findall(r'/static/(app\.js|graficos\.js|style\.css)\?v=([0-9a-f]{12})"', r.text)
+    assert {n for n, _ in versoes} == {"app.js", "graficos.js", "style.css"}
+    js = cli.get("/static/app.js?v=" + dict(versoes)["app.js"])
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"

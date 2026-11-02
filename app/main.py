@@ -1,6 +1,7 @@
 """API web e páginas do Assistente de Automação e Instrumentação."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -11,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -35,6 +36,8 @@ async def cabecalhos_seguranca(request: Request, call_next):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
+    if request.url.path.startswith("/static/"):
+        resp.headers.setdefault("Cache-Control", "no-cache")  # pode guardar, mas confere a versão sempre
     return resp
 
 
@@ -157,9 +160,19 @@ def concluir_envio(envio_id: str, background: BackgroundTasks, tipo: str = Form(
 
 # --------------------------------------------------------------------------- páginas e sessão
 
+def _versao_estatico(nome: str) -> str:
+    return hashlib.sha256((STATIC / nome).read_bytes()).hexdigest()[:12]
+
+
+# Cada deploy muda o "?v=" dos arquivos da interface: o navegador nunca fica com o JS antigo.
+_INDEX_HTML = re.sub(r'(/static/(app\.js|graficos\.js|style\.css))"',
+                     lambda m: f'{m.group(1)}?v={_versao_estatico(m.group(2))}"',
+                     (STATIC / "index.html").read_text(encoding="utf-8"))
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return HTMLResponse(_INDEX_HTML, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/saude")
