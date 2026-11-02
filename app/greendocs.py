@@ -40,6 +40,21 @@ def _estado() -> Path:
     return config.DATA_DIR / "greendocs_sessao.json"
 
 
+# A busca terminou quando o indicador de carregamento some de dentro da tabela e aparecem linhas
+# ou "Nenhum item por aqui". Só vale depois de ver o carregamento (ou 10 s sem ele): logo ao abrir,
+# a página às vezes mostra o "nenhum item" de antes de a busca começar.
+JS_BUSCA_TERMINOU = r"""
+() => {
+  const w = window, agora = performance.now();
+  if (!w.__gdInicio) w.__gdInicio = agora;
+  const carregando = !!document.querySelector('[class*=FlatTable] [role=progressbar]');
+  if (carregando) { w.__gdViuCarregar = true; return false; }
+  if (!w.__gdViuCarregar && agora - w.__gdInicio < 10000) return false;
+  const linhas = document.querySelectorAll('[class*=FlatTableContentColumnContainer] a[href*="/app/item/"]').length;
+  return linhas > 0 || /Nenhum item por aqui/.test(document.body.innerText);
+}
+"""
+
 # Lê a tabela de resultados. O GreenDocs monta a tabela por colunas: a 1ª coluna é a caixa de
 # seleção e as seguintes seguem a ordem dos cabeçalhos ("Nome", "Revisão", "Descrição"...).
 JS_TABELA = r"""
@@ -147,8 +162,7 @@ def buscar(termo: str, no_conteudo: bool = True) -> dict:
                f"&withContent={'true' if no_conteudo else 'false'}&_p={config.GREENDOCS_PROJETO}")
     with _pagina() as page:
         _abrir(page, caminho)
-        page.wait_for_function(
-            "() => /Nenhum item por aqui|itens totais/.test(document.body.innerText)", timeout=TIMEOUT_BUSCA_MS)
+        page.wait_for_function(JS_BUSCA_TERMINOU, timeout=TIMEOUT_BUSCA_MS, polling=1000)
         dados = page.evaluate(JS_TABELA)
     res = interpretar_tabela(dados)[:MAX_RESULTADOS]
     _guardar_vistos(res)
