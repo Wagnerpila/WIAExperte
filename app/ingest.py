@@ -695,3 +695,30 @@ def processar_documento(doc_id: int) -> None:
                      " WHERE id = ?", (status, erro, observ, doc_id))
     for f in filhos:
         processar_documento(f)
+
+
+# --------------------------------------------------------------------------- limpeza
+
+_SQL_DUPLICADOS = (
+    "SELECT d.id, d.caminho, COALESCE(d.tamanho, 0) AS tamanho FROM documentos d"
+    " WHERE d.status = 'duplicado' AND d.sha256 IS NOT NULL AND EXISTS ("
+    "   SELECT 1 FROM documentos o WHERE o.sha256 = d.sha256 AND o.id != d.id"
+    "   AND o.status NOT IN ('duplicado', 'erro', 'processando'))")
+
+
+def resumo_duplicados(conn) -> dict:
+    """Quantos documentos marcados como duplicado podem ser apagados (o original segue na base)."""
+    rows = conn.execute(_SQL_DUPLICADOS).fetchall()
+    return {"quantidade": len(rows), "bytes": sum(r["tamanho"] for r in rows)}
+
+
+def apagar_duplicados() -> dict:
+    """Apaga os registros e os arquivos dos duplicados cujo original continua indexado."""
+    with db.session() as conn:
+        rows = conn.execute(_SQL_DUPLICADOS).fetchall()
+        ids = [r["id"] for r in rows]
+        conn.executemany("DELETE FROM documentos WHERE id = ?", [(i,) for i in ids])
+    for r in rows:
+        if r["caminho"]:
+            Path(r["caminho"]).unlink(missing_ok=True)
+    return {"apagados": len(ids), "bytes": sum(r["tamanho"] for r in rows)}

@@ -243,6 +243,17 @@ def reprocessar(doc_id: int, background: BackgroundTasks, tipo: str | None = For
     return {"ok": True}
 
 
+@app.get("/api/duplicados")
+def ver_duplicados(u: dict = Usuario):
+    with db.session() as conn:
+        return ingest.resumo_duplicados(conn)
+
+
+@app.post("/api/duplicados/apagar")
+def apagar_duplicados(u: dict = Usuario):
+    return ingest.apagar_duplicados()
+
+
 @app.delete("/api/documentos/{doc_id}")
 def apagar_documento(doc_id: int, u: dict = Usuario):
     with db.session() as conn:

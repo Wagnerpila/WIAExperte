@@ -123,3 +123,36 @@ def test_admin_pelo_ambiente(monkeypatch):
     monkeypatch.setattr(config, "ADMIN_SENHA", "curta")  # senha inválida não derruba o app
     auth.garantir_admin_do_ambiente()
     assert auth.autenticar("wagner", "outra-senha")
+
+
+def test_apagar_duplicados(cli, tmp_path):
+    from pathlib import Path
+
+    from app import ingest
+
+    assert cli.get("/api/duplicados").status_code == 401  # exige login
+    login(cli)
+    p = tmp_path / "34231-I-EQU-00120-0001.txt"
+    p.write_text("tag 34221RNF-30101-VT1", encoding="utf-8")
+    ids = []
+    for nome in ("a.txt", "b.txt", "c.txt"):
+        ids.append(ingest.registrar_arquivo(p, nome))
+        ingest.processar_documento(ids[-1])
+    orfao_src = tmp_path / "orfao.txt"
+    orfao_src.write_text("conteúdo cujo original foi apagado", encoding="utf-8")
+    orig = ingest.registrar_arquivo(orfao_src, "orig.txt")
+    ingest.processar_documento(orig)
+    orfao = ingest.registrar_arquivo(orfao_src, "orfao.txt")
+    ingest.processar_documento(orfao)
+    with db.session() as conn:
+        conn.execute("DELETE FROM documentos WHERE id = ?", (orig,))  # sem o original, não é apagado
+        caminhos = {r["id"]: r["caminho"] for r in conn.execute("SELECT id, caminho FROM documentos")}
+
+    assert cli.get("/api/duplicados").json()["quantidade"] == 2
+    r = cli.post("/api/duplicados/apagar").json()
+    assert r["apagados"] == 2 and r["bytes"] > 0
+    with db.session() as conn:
+        restantes = {row["id"]: row["status"] for row in conn.execute("SELECT id, status FROM documentos")}
+    assert restantes == {ids[0]: "ok", orfao: "duplicado"}
+    assert not Path(caminhos[ids[1]]).exists() and Path(caminhos[ids[0]]).exists()
+    assert cli.get("/api/duplicados").json()["quantidade"] == 0

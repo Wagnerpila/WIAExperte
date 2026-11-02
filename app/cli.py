@@ -3,6 +3,7 @@
     python -m app.cli criar-usuario <nome> [--admin]
     python -m app.cli importar <pasta-ou-arquivo> [--tipo T] [--plataforma P] [--area A] [--equipamento E]
     python -m app.cli reprocessar-pendentes
+    python -m app.cli apagar-duplicados
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ def main() -> None:
     im.add_argument("--usuario", default="importacao")
 
     sub.add_parser("reprocessar-pendentes", help="reprocessa documentos com erro ou pendentes")
+    sub.add_parser("apagar-duplicados", help="apaga os documentos marcados como duplicado (o original fica)")
 
     a = ap.parse_args()
     if a.cmd == "criar-usuario":
@@ -57,6 +59,9 @@ def main() -> None:
         for i in ids:
             ingest.processar_documento(i)
             print(f"#{i} reprocessado")
+    elif a.cmd == "apagar-duplicados":
+        r = ingest.apagar_duplicados()
+        print(f"{r['apagados']} duplicado(s) apagado(s), {r['bytes'] / 1e6:.1f} MB liberados")
 
 
 if __name__ == "__main__":

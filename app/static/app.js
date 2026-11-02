@@ -460,7 +460,30 @@
   $("#filtro-docs").addEventListener("input", () => { clearTimeout(tFiltro); tFiltro = setTimeout(carregarDocs, 300); });
   $("#filtro-tipo").addEventListener("change", carregarDocs);
 
+  async function atualizarDuplicados() {
+    const bt = $("#btn-apagar-duplicados");
+    try {
+      const r = await api("/api/duplicados");
+      bt.classList.toggle("hidden", !r.quantidade);
+      bt.textContent = `Apagar ${num(r.quantidade)} duplicado(s)`;
+      bt.dataset.qtd = r.quantidade; bt.dataset.bytes = r.bytes;
+    } catch (e) { bt.classList.add("hidden"); }
+  }
+  $("#btn-apagar-duplicados").addEventListener("click", () => {
+    const bt = $("#btn-apagar-duplicados");
+    dialogo(`Apagar ${num(+bt.dataset.qtd)} duplicado(s)?`,
+      `<p>São arquivos com conteúdo idêntico a outro documento que já está indexado (ex.: o mesmo PDF solto e dentro de um .zip). O original continua na base; só as cópias (${bytes(+bt.dataset.bytes)}) são removidas. Isso não pode ser desfeito.</p><button class="btn perigo" id="confirma-duplicados">Apagar duplicados</button>`);
+    $("#confirma-duplicados").addEventListener("click", async (e) => {
+      e.target.disabled = true; e.target.textContent = "Apagando…";
+      const r = await api("/api/duplicados/apagar", { method: "POST" });
+      $("#dialogo").close();
+      $("#lista-envio").textContent = `${num(r.apagados)} duplicado(s) apagado(s), ${bytes(r.bytes)} liberados.`;
+      carregarDocs();
+    });
+  });
+
   async function carregarDocs() {
+    atualizarDuplicados();
     const q = new URLSearchParams();
     if ($("#filtro-docs").value) q.set("filtro", $("#filtro-docs").value);
     if ($("#filtro-tipo").value) q.set("tipo", $("#filtro-tipo").value);
