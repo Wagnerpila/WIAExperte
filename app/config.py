@@ -47,6 +47,13 @@ ADMIN_SENHA = os.environ.get("WIA_ADMIN_SENHA", "")
 COOKIE_SECURE = _bool("WIA_COOKIE_SECURE", True)
 MAX_UPLOAD_MB = int(os.environ.get("WIA_MAX_UPLOAD_MB", "2048"))
 
+# GreenDocs (busca e download sob demanda pelo chat). Sem e-mail/senha, a integração fica desligada.
+GREENDOCS_URL = os.environ.get("WIA_GREENDOCS_URL", "https://klabin.greendocs.net").rstrip("/")
+GREENDOCS_EMAIL = os.environ.get("WIA_GREENDOCS_EMAIL", "")
+GREENDOCS_SENHA = os.environ.get("WIA_GREENDOCS_SENHA", "")
+GREENDOCS_PROJETO = os.environ.get("WIA_GREENDOCS_PROJETO", "14")  # 14 = ambiente PUMA
+GREENDOCS_MAX_DOWNLOADS = int(os.environ.get("WIA_GREENDOCS_MAX_DOWNLOADS", "5"))  # por chamada
+
 # Recursos por modelo: o parâmetro `effort` não existe nos modelos mais antigos, e o
 # fallback do servidor (`fallbacks: "default"`) só existe em alguns modelos atuais.
 _SEM_EFFORT = ("claude-haiku-4-5", "claude-sonnet-4-5", "claude-3")

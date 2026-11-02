@@ -4,6 +4,8 @@
     python -m app.cli importar <pasta-ou-arquivo> [--tipo T] [--plataforma P] [--area A] [--equipamento E]
     python -m app.cli reprocessar-pendentes
     python -m app.cli apagar-duplicados
+    python -m app.cli greendocs-buscar <termo> [--so-descricao]
+    python -m app.cli greendocs-baixar <nome-do-documento> [...]
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ import argparse
 import getpass
 from pathlib import Path
 
-from . import auth, db, ingest
+from . import auth, db, greendocs, ingest
 
 
 def main() -> None:
@@ -33,6 +35,11 @@ def main() -> None:
 
     sub.add_parser("reprocessar-pendentes", help="reprocessa documentos com erro ou pendentes")
     sub.add_parser("apagar-duplicados", help="apaga os documentos marcados como duplicado (o original fica)")
+    gb = sub.add_parser("greendocs-buscar", help="testa a busca no GreenDocs")
+    gb.add_argument("termo")
+    gb.add_argument("--so-descricao", action="store_true", help="não procurar dentro dos arquivos")
+    gd = sub.add_parser("greendocs-baixar", help="baixa documentos do GreenDocs para a base (após uma busca)")
+    gd.add_argument("nomes", nargs="+")
 
     a = ap.parse_args()
     if a.cmd == "criar-usuario":
@@ -59,6 +66,20 @@ def main() -> None:
         for i in ids:
             ingest.processar_documento(i)
             print(f"#{i} reprocessado")
+    elif a.cmd == "greendocs-buscar":
+        r = greendocs.buscar(a.termo, no_conteudo=not a.so_descricao)
+        with db.session() as conn:
+            greendocs.situacao_na_base(conn, r["resultados"])
+        print(f"{r['total']} resultado(s) para {r['termo']!r}")
+        for x in r["resultados"]:
+            print(f"  {x['nome']}  rev {x['revisao']}  [{x['na_base']}]  {(x['descricao'] or '')[:90]}")
+    elif a.cmd == "greendocs-baixar":
+        for x in greendocs.baixar_para_base(a.nomes, "cli"):
+            if x.get("erro"):
+                print(f"{x['nome']}: ERRO {x['erro']}")
+                continue
+            for d in x["documentos"]:
+                print(f"{x['nome']} rev {x['revisao']}: #{d['id']} {d['nome']} {d['status']} ({d['n_trechos']} trechos)")
     elif a.cmd == "apagar-duplicados":
         r = ingest.apagar_duplicados()
         print(f"{r['apagados']} duplicado(s) apagado(s), {r['bytes'] / 1e6:.1f} MB liberados")

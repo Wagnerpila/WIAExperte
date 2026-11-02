@@ -175,6 +175,18 @@ CREATE TABLE IF NOT EXISTS alarmes (
 );
 CREATE INDEX IF NOT EXISTS ix_al_ts ON alarmes(ts);
 CREATE INDEX IF NOT EXISTS ix_al_tag ON alarmes(tag, ts);
+
+-- Documentos vistos em buscas no GreenDocs (e o que já foi baixado para a base).
+CREATE TABLE IF NOT EXISTS greendocs_itens (
+    nome             TEXT PRIMARY KEY,
+    revisao          TEXT,
+    descricao        TEXT,
+    link             TEXT NOT NULL,
+    visto_em         TEXT NOT NULL,
+    revisao_baixada  TEXT,
+    doc_ids          TEXT,
+    baixado_em       TEXT
+);
 """
 
 

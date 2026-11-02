@@ -73,6 +73,15 @@ Use esta opção só numa VPS que não tenha outro proxy ocupando as portas 80/4
 
 O CSV de alarmes reconhece colunas com nomes comuns em português e inglês (`Data/Hora`, `Timestamp`, `Tag`, `Point`, `Message`, `Priority`, `State`…), separador `;` ou `,` e datas `dd/mm/aaaa` ou ISO.
 
+## GreenDocs (busca sob demanda pelo chat)
+
+Nada é baixado em massa. Quando a base não tem a resposta, o assistente usa `buscar_greendocs` (busca no ambiente PUMA, inclusive dentro do conteúdo dos arquivos, por exemplo por uma tag) e `baixar_greendocs` (baixa até 5 documentos por chamada, processa na hora e depois responde a partir da base). A revisão baixada fica registrada; o assistente não baixa de novo o que já está na base na mesma revisão.
+
+- Ligar: no Ambiente do Easypanel, `WIA_GREENDOCS_EMAIL` e `WIA_GREENDOCS_SENHA` (de preferência uma conta de serviço). Sem essas variáveis, as ferramentas nem aparecem para o assistente.
+- Funciona com um Chromium sem tela (Playwright) dentro do container; a sessão fica em `/data/greendocs_sessao.json` para não fazer login a cada pergunta.
+- Testar pelo terminal: `python -m app.cli greendocs-buscar "34221RNF-30101-VT1"` e `python -m app.cli greendocs-baixar 34231-I-LIO-00117-0001`.
+- Fora do Docker: `pip install -r requirements.txt` e `python -m playwright install --only-shell chromium`.
+
 ## Indicadores do painel
 
 **Base**: documentos por tipo, plataforma e área; envios por semana; pendências (erro, PDF sem texto, aguardando transcrição, binário).

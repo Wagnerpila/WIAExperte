@@ -9,7 +9,7 @@ from pathlib import Path
 
 import anthropic
 
-from . import config, db, ingest
+from . import config, db, greendocs, ingest
 from .llm import client, image_block, registrar_uso, request_kwargs
 
 log = logging.getLogger("wia.agent")
@@ -148,6 +148,46 @@ TOOLS: list[dict] = [
 ]
 
 
+TOOLS_GREENDOCS: list[dict] = [
+    {
+        "name": "buscar_greendocs",
+        "description": (
+            "Pesquisa documentos técnicos no GreenDocs da Klabin (ambiente PUMA: MP27 e MP28). Use quando a "
+            "base não tiver o documento ou a informação. Com no_conteudo=true (padrão) procura dentro dos "
+            "arquivos: ache documentos por tag (ex. 34221RNF-30101-VT1), código de documento, nome de "
+            "armário/caixa de junção ou palavra-chave; com false, só pela descrição. Demora ~20-60 s. Retorna "
+            "nome, revisão, descrição e se já está na base. Depois use baixar_greendocs com os nomes certos."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "consulta": {"type": "string", "description": "Tag, código ou termo. Um termo por busca funciona melhor."},
+                "no_conteudo": {"type": "boolean", "description": "Procurar dentro dos arquivos (padrão true)."},
+            },
+            "required": ["consulta"],
+        },
+    },
+    {
+        "name": "baixar_greendocs",
+        "description": (
+            "Baixa do GreenDocs para a base os documentos indicados (nomes exatos vindos de buscar_greendocs) e "
+            "processa na hora; em seguida use buscar_base/ler_documento para responder. Baixe só o necessário "
+            "(no máximo os mais relevantes); não baixe de novo o que já está na base na mesma revisão."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "documentos": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                               "description": "Nomes dos documentos, ex. ['34231-I-LIO-00117-0001']."},
+            },
+            "required": ["documentos"],
+        },
+    },
+]
+
+
+def tools_disponiveis() -> list[dict]:
+    return TOOLS + (TOOLS_GREENDOCS if greendocs.habilitado() else [])
+
+
 # --------------------------------------------------------------------------- execução das ferramentas
 
 def _janela(sql_col: str, args: dict, params: list) -> str:
@@ -284,7 +324,31 @@ def t_glossario(conn, args: dict, usuario: str) -> dict:
     return {"aviso": AVISO_DADOS, "termos": [dict(r) for r in rows]}
 
 
+def t_buscar_greendocs(conn, args: dict, usuario: str) -> dict:
+    res = greendocs.buscar(str(args.get("consulta", "")), bool(args.get("no_conteudo", True)))
+    greendocs.situacao_na_base(conn, res["resultados"])
+    res["aviso"] = AVISO_DADOS
+    if not res["resultados"]:
+        res["observacao"] = ("Nada encontrado no GreenDocs. Tente só a tag, outra grafia, o código do documento, "
+                             "ou no_conteudo=false com palavras da descrição.")
+    return res
+
+
+def t_baixar_greendocs(conn, args: dict, usuario: str) -> dict:
+    nomes = [str(n).strip() for n in (args.get("documentos") or []) if str(n).strip()]
+    if not nomes:
+        return {"erro": "informe ao menos um documento"}
+    limite = config.GREENDOCS_MAX_DOWNLOADS
+    extra = nomes[limite:]
+    res = {"aviso": AVISO_DADOS, "baixados": greendocs.baixar_para_base(nomes[:limite], usuario)}
+    if extra:
+        res["observacao"] = f"limite de {limite} por chamada; não baixados: {', '.join(extra)}"
+    return res
+
+
 EXECUTORES = {
+    "buscar_greendocs": t_buscar_greendocs,
+    "baixar_greendocs": t_baixar_greendocs,
     "buscar_base": t_buscar_base,
     "ler_documento": t_ler_documento,
     "listar_documentos": t_listar_documentos,
@@ -311,6 +375,11 @@ def _resumo_ferramenta(nome: str, args: dict, res: dict) -> str:
         return f"gravou nota sobre {args.get('alvo')}"
     if nome == "registrar_ocorrencia":
         return f"registrou ocorrência de {args.get('equipamento')}"
+    if nome == "buscar_greendocs":
+        return f"pesquisou no GreenDocs “{args.get('consulta', '')}” ({len(res.get('resultados', []))} documentos)"
+    if nome == "baixar_greendocs":
+        ok = [b["nome"] for b in res.get("baixados", []) if not b.get("erro")]
+        return f"baixou do GreenDocs: {', '.join(ok) or 'nada'}"
     if nome == "glossario":
         return f"glossário: {args.get('acao')} {args.get('termo') or ''}".strip()
     return nome
@@ -327,7 +396,7 @@ def executar_ferramenta(nome: str, args: dict, usuario: str, conversa_id: int) -
             raise ValueError("entrada da ferramenta deve ser um objeto JSON")
         with db.session() as conn:
             res = fn(conn, args, usuario)
-        n = len(res.get("resultados") or res.get("documentos") or res.get("ocorrencias")
+        n = len(res.get("resultados") or res.get("documentos") or res.get("baixados") or res.get("ocorrencias")
                 or res.get("eventos") or res.get("termos") or [])
         resumo = _resumo_ferramenta(nome, args, res)
         saida = json.dumps(res, ensure_ascii=False, default=str)
@@ -386,7 +455,7 @@ def responder(conversa_id: int, usuario: str, texto: str, imagens: list[Path] | 
             historico = _carregar_historico(conn, conversa_id)
         inicio = time.monotonic()
         try:
-            resp = client().beta.messages.create(system=sistema, tools=TOOLS, messages=historico, **kw)
+            resp = client().beta.messages.create(system=sistema, tools=tools_disponiveis(), messages=historico, **kw)
         except anthropic.RateLimitError:
             texto_final = "A API está com limite de requisições no momento. Tente de novo em alguns segundos."
             break
