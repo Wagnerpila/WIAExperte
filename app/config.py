@@ -44,8 +44,28 @@ SECRET_KEY = os.environ.get("WIA_SECRET_KEY", "")
 COOKIE_SECURE = _bool("WIA_COOKIE_SECURE", True)
 MAX_UPLOAD_MB = int(os.environ.get("WIA_MAX_UPLOAD_MB", "200"))
 
-# Preço em US$ por milhão de tokens, só para a estimativa de custo no painel.
-PRICE_INPUT = float(os.environ.get("WIA_PRICE_INPUT", "4.0"))
-PRICE_OUTPUT = float(os.environ.get("WIA_PRICE_OUTPUT", "20.0"))
-PRICE_CACHE_READ = float(os.environ.get("WIA_PRICE_CACHE_READ", "0.20"))
-PRICE_CACHE_WRITE = float(os.environ.get("WIA_PRICE_CACHE_WRITE", "5.0"))
+# Recursos por modelo: o parâmetro `effort` não existe nos modelos mais antigos, e o
+# fallback do servidor (`fallbacks: "default"`) só existe em alguns modelos atuais.
+_SEM_EFFORT = ("claude-haiku-4-5", "claude-sonnet-4-5", "claude-3")
+_COM_FALLBACK = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
+
+
+def suporta_effort(modelo: str) -> bool:
+    return not modelo.startswith(_SEM_EFFORT)
+
+
+def suporta_fallback(modelo: str) -> bool:
+    return modelo in _COM_FALLBACK
+
+
+# Preço em US$ por milhão de tokens (entrada, saída), só para a estimativa de custo no painel.
+_PRECOS = {
+    "claude-fable-5-1": (10.0, 50.0), "claude-opus-5-5": (4.0, 20.0), "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-4-6": (3.0, 15.0), "claude-haiku-5-5": (0.10, 0.50), "claude-haiku-4-5": (1.0, 5.0),
+}
+_pin, _pout = _PRECOS.get(MODEL, (4.0, 20.0))
+PRICE_INPUT = float(os.environ.get("WIA_PRICE_INPUT") or _pin)
+PRICE_OUTPUT = float(os.environ.get("WIA_PRICE_OUTPUT") or _pout)
+PRICE_CACHE_READ = float(os.environ.get("WIA_PRICE_CACHE_READ") or PRICE_INPUT * 0.1)
+PRICE_CACHE_WRITE = float(os.environ.get("WIA_PRICE_CACHE_WRITE") or PRICE_INPUT * 1.25)

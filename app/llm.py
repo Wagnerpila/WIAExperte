@@ -22,15 +22,17 @@ def client() -> anthropic.Anthropic:
     return anthropic.Anthropic(max_retries=3, timeout=600.0)
 
 
-def request_kwargs() -> dict:
-    """Parâmetros comuns às chamadas do modelo principal."""
+def request_kwargs(effort: str | None = None) -> dict:
+    """Parâmetros comuns às chamadas, só com o que o modelo configurado aceita."""
     kw: dict = {
         "model": config.MODEL,
         "max_tokens": config.MAX_TOKENS,
-        "output_config": {"effort": config.EFFORT},
         "cache_control": {"type": "ephemeral"},
     }
-    if config.USE_FALLBACKS:
+    nivel = effort or config.EFFORT
+    if nivel and config.suporta_effort(config.MODEL):
+        kw["output_config"] = {"effort": nivel}
+    if config.USE_FALLBACKS and config.suporta_fallback(config.MODEL):
         # Se o classificador de segurança recusar, a API refaz no modelo recomendado.
         kw["betas"] = ["server-side-fallback-2026-07-01"]
         kw["fallbacks"] = "default"
@@ -88,8 +90,7 @@ def descrever_imagem(path: Path, contexto: str | None = None) -> str:
     texto = DESCRICAO_PROMPT
     if contexto:
         texto += f"\n\nContexto informado por quem enviou: {contexto}"
-    kw = request_kwargs()
-    kw["output_config"] = {"effort": "low"}
+    kw = request_kwargs(effort="low")
     inicio = time.monotonic()
     resp = client().beta.messages.create(
         messages=[{"role": "user", "content": [image_block(path), {"type": "text", "text": texto}]}],
