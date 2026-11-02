@@ -225,7 +225,47 @@ def trechos_de_mensagens(msgs: list[dict]) -> list[tuple[str, str, str | None]]:
     return out
 
 
+def _trechos_pagina(n: int, txt: str) -> list[tuple[str, str, str | None]]:
+    txt = txt.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return [(t, f"página {n}" + (f" (parte {k + 1})" if k else ""), None)
+            for k, (t, _, _) in enumerate(trechos_de_linhas(txt))] if txt else []
+
+
 def trechos_pdf(path: Path) -> list[tuple[str, str, str | None]]:
+    """Texto do PDF por página. Usa o PDFium (motor do Chrome): um manual de 3.400 páginas sai em
+    ~25 s, contra dezenas de minutos no pypdf. Se o PDFium não abrir o arquivo, tenta o pypdf."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return _trechos_pdf_pypdf(path)
+    try:
+        doc = pdfium.PdfDocument(str(path))
+    except Exception as e:  # PDF que o PDFium recusa (senha, estrutura quebrada): segunda opinião
+        log.warning("PDFium não abriu %s (%s); tentando pypdf", path.name, e)
+        return _trechos_pdf_pypdf(path)
+    out: list[tuple[str, str, str | None]] = []
+    falhas = []
+    try:
+        for i in range(len(doc)):
+            try:
+                pagina = doc[i]
+                tp = pagina.get_textpage()
+                txt = tp.get_text_bounded()
+                tp.close()
+                pagina.close()
+            except Exception as e:  # uma página ruim não derruba o documento inteiro
+                log.warning("PDF %s: falha ao ler a página %s: %s", path.name, i + 1, e)
+                falhas.append(i + 1)
+                continue
+            out.extend(_trechos_pagina(i + 1, txt))
+    finally:
+        doc.close()
+    if falhas and not out:
+        return _trechos_pdf_pypdf(path)
+    return out
+
+
+def _trechos_pdf_pypdf(path: Path) -> list[tuple[str, str, str | None]]:
     from pypdf import PdfReader, apply_configuration
 
     # Diagramas exportados do Visio (arquiteturas de rede) passam do limite padrão de 2 milhões de
@@ -243,10 +283,7 @@ def trechos_pdf(path: Path) -> list[tuple[str, str, str | None]]:
                 log.warning("PDF %s: falha ao ler a página %s: %s", path.name, n, e)
                 falhas.append(n)
                 continue
-            if not txt:
-                continue
-            for k, (t, _, _) in enumerate(trechos_de_linhas(txt)):
-                out.append((t, f"página {n}" + (f" (parte {k + 1})" if k else ""), None))
+            out.extend(_trechos_pagina(n, txt))
     if falhas and not out:
         raise ValueError(f"não foi possível ler nenhuma página (falhas nas páginas {falhas[:10]})")
     return out

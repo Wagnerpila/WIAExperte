@@ -419,22 +419,61 @@
     return out;
   }
 
+  // Arquivo grande: sobe em partes (cada requisição pequena passa pelo proxy) e retoma se cair.
+  const GRANDE = 32 * (1 << 20);
+  const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+  function camposEnvio(fd) {
+    fd.append("tipo", $("#up-tipo").value);
+    ["plataforma", "area", "equipamento"].forEach((k) => fd.append(k, $("#up-" + k).value));
+    fd.append("observacao", $("#up-obs").value);
+    return fd;
+  }
+  async function enviarEmPartes(file, progresso) {
+    const env = await api("/api/envios", { method: "POST", json: { nome: file.name, tamanho: file.size } });
+    const passo = Math.min(env.parte_max, 8 * (1 << 20));
+    let pos = 0, tentativas = 0;
+    while (pos < file.size) {
+      progresso(pos);
+      try {
+        const r = await fetch(`/api/envios/${env.id}?offset=${pos}`, { method: "PUT", credentials: "same-origin",
+          headers: { "Content-Type": "application/octet-stream" }, body: file.slice(pos, pos + passo) });
+        if (r.status === 401) { mostrarLogin(); throw new Error("sessão expirada"); }
+        const corpo = await r.json().catch(() => ({}));
+        if (r.ok || r.status === 409) { pos = corpo.recebido; tentativas = 0; continue; }  // 409: retoma do servidor
+        throw new Error(corpo.detail || `erro ${r.status}`);
+      } catch (e) {
+        if (e.message === "sessão expirada" || ++tentativas > 5) throw e;
+        await espera(2000 * tentativas);  // rede caiu: espera e pergunta ao servidor quanto já chegou
+        try { pos = (await api(`/api/envios/${env.id}`)).recebido; } catch (_) { }
+      }
+    }
+    progresso(file.size);
+    return api(`/api/envios/${env.id}/concluir`, { method: "POST", body: camposEnvio(new FormData()) });
+  }
+
   $("#btn-enviar-arquivos").addEventListener("click", async () => {
     const bt = $("#btn-enviar-arquivos"), box = $("#lista-envio");
-    const itens = selecionados.slice(), grupos = lotes(itens);
+    const itens = selecionados.slice();
+    const grandes = itens.filter((it) => it.file.size > GRANDE), grupos = lotes(itens.filter((it) => it.file.size <= GRANDE));
     bt.disabled = true;
     let enviados = 0;
     const falhas = [], naoEnviados = [];
+    for (const it of grandes) {
+      try {
+        await enviarEmPartes(it.file, (pos) => {
+          bt.textContent = `Enviando ${num(enviados)}/${num(itens.length)}…`;
+          box.textContent = `${it.caminho}: ${bytes(pos)} de ${bytes(it.file.size)} (${num(100 * pos / it.file.size, 0)}%)`;
+        });
+        enviados += 1;
+      } catch (e) { falhas.push(`${it.caminho}: ${e.message}`); naoEnviados.push(it); }
+    }
     for (const [i, grupo] of grupos.entries()) {
       bt.textContent = `Enviando ${num(enviados)}/${num(itens.length)}…`;
       box.textContent = `Lote ${i + 1} de ${grupos.length}: ${grupo.map((it) => it.file.name).join(", ")}`;
       try {
         const fd = new FormData();
         grupo.forEach((it) => fd.append("arquivos", it.file, it.file.name));
-        fd.append("tipo", $("#up-tipo").value);
-        ["plataforma", "area", "equipamento"].forEach((k) => fd.append(k, $("#up-" + k).value));
-        fd.append("observacao", $("#up-obs").value);
-        await api("/api/documentos", { method: "POST", body: fd });
+        await api("/api/documentos", { method: "POST", body: camposEnvio(fd) });
         enviados += grupo.length;
       } catch (e) { falhas.push(`${grupo.map((it) => it.caminho).join(", ")}: ${e.message}`); naoEnviados.push(...grupo); }
       if (i % 3 === 2) carregarDocs();
@@ -443,7 +482,7 @@
     inputArq.value = ""; inputPasta.value = "";
     if (falhas.length) {
       selecionados = naoEnviados;
-      box.innerHTML = `<span style="color:var(--critical)">${num(enviados)} enviado(s); falharam ${falhas.length} lote(s) — clique em Enviar para tentar de novo:<br>${falhas.map(esc).join("<br>")}</span>`;
+      box.innerHTML = `<span style="color:var(--critical)">${num(enviados)} enviado(s); falharam ${falhas.length} envio(s) — clique em Enviar para tentar de novo:<br>${falhas.map(esc).join("<br>")}</span>`;
       bt.disabled = false;
     } else {
       selecionados = []; $("#up-obs").value = "";

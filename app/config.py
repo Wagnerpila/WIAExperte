@@ -45,7 +45,7 @@ SECRET_KEY = os.environ.get("WIA_SECRET_KEY", "")
 ADMIN_USUARIO = os.environ.get("WIA_ADMIN_USUARIO", "")
 ADMIN_SENHA = os.environ.get("WIA_ADMIN_SENHA", "")
 COOKIE_SECURE = _bool("WIA_COOKIE_SECURE", True)
-MAX_UPLOAD_MB = int(os.environ.get("WIA_MAX_UPLOAD_MB", "200"))
+MAX_UPLOAD_MB = int(os.environ.get("WIA_MAX_UPLOAD_MB", "2048"))
 
 # Recursos por modelo: o parâmetro `effort` não existe nos modelos mais antigos, e o
 # fallback do servidor (`fallbacks: "default"`) só existe em alguns modelos atuais.

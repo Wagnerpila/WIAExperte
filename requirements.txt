@@ -5,6 +5,7 @@ python-multipart==0.0.33
 itsdangerous==2.2.0
 pypdf==6.21.4
 fonttools==4.55.0
+pypdfium2==4.30.0
 pillow==13.0.0
 openpyxl==3.1.5
 xlrd==2.0.1

@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import time
+import uuid
 import logging
 import tempfile
 from pathlib import Path
@@ -53,6 +57,102 @@ def salvar_upload(up: UploadFile) -> Path:
                 raise HTTPException(413, f"arquivo {up.filename} maior que {config.MAX_UPLOAD_MB} MB")
             tmp.write(bloco)
     return Path(tmp.name)
+
+
+# --------------------------------------------------------------------------- envio em partes
+# Arquivos grandes (ex.: .zip de 300 MB do GreenDocs) sobem em pedaços: cada requisição fica
+# pequena para o proxy (Traefik) e, se a conexão cair, o navegador continua do ponto onde parou.
+
+ENVIOS_DIR = config.DATA_DIR / "envios"
+PARTE_MAX = 16 * 1024 * 1024
+ENVIO_VALIDADE_S = 24 * 3600
+
+
+class NovoEnvio(BaseModel):
+    nome: str
+    tamanho: int
+
+
+def _envio(envio_id: str, u: dict) -> tuple[Path, dict]:
+    if not re.fullmatch(r"[0-9a-f]{32}", envio_id):
+        raise HTTPException(404)
+    meta_p = ENVIOS_DIR / f"{envio_id}.json"
+    if not meta_p.is_file():
+        raise HTTPException(404, "envio não encontrado ou expirado")
+    meta = json.loads(meta_p.read_text(encoding="utf-8"))
+    if meta["usuario"] != u["username"]:
+        raise HTTPException(404)
+    return ENVIOS_DIR / f"{envio_id}.part", meta
+
+
+def _limpar_envios_velhos() -> None:
+    agora = time.time()
+    for p in ENVIOS_DIR.glob("*"):
+        try:
+            if agora - p.stat().st_mtime > ENVIO_VALIDADE_S:
+                p.unlink()
+        except OSError:
+            pass
+
+
+@app.post("/api/envios")
+def criar_envio(dados: NovoEnvio, u: dict = Usuario):
+    limite = config.MAX_UPLOAD_MB * 1024 * 1024
+    if dados.tamanho <= 0:
+        raise HTTPException(400, "arquivo vazio")
+    if dados.tamanho > limite:
+        raise HTTPException(413, f"arquivo {dados.nome} maior que {config.MAX_UPLOAD_MB} MB "
+                                 "(ajuste WIA_MAX_UPLOAD_MB no Ambiente)")
+    ENVIOS_DIR.mkdir(parents=True, exist_ok=True)
+    _limpar_envios_velhos()
+    livre = shutil.disk_usage(ENVIOS_DIR).free
+    if livre < dados.tamanho * 3 + 512 * 1024 * 1024:  # parte + cópia na base + extração de zip
+        raise HTTPException(507, f"pouco espaço em disco no servidor ({livre // 1024 ** 2} MB livres)")
+    envio_id = uuid.uuid4().hex
+    (ENVIOS_DIR / f"{envio_id}.json").write_text(json.dumps(
+        {"usuario": u["username"], "nome": Path(dados.nome).name or "arquivo", "tamanho": dados.tamanho}),
+        encoding="utf-8")
+    (ENVIOS_DIR / f"{envio_id}.part").touch()
+    return {"id": envio_id, "parte_max": PARTE_MAX}
+
+
+@app.get("/api/envios/{envio_id}")
+def ver_envio(envio_id: str, u: dict = Usuario):
+    part, meta = _envio(envio_id, u)
+    return {"recebido": part.stat().st_size, "tamanho": meta["tamanho"]}
+
+
+@app.put("/api/envios/{envio_id}")
+async def enviar_parte(envio_id: str, request: Request, offset: int, u: dict = Usuario):
+    part, meta = _envio(envio_id, u)
+    atual = part.stat().st_size
+    if offset != atual:  # parte repetida ou fora de ordem: o cliente retoma de "recebido"
+        return JSONResponse({"recebido": atual, "tamanho": meta["tamanho"]}, status_code=409)
+    recebido = 0
+    with part.open("ab") as f:
+        async for bloco in request.stream():
+            recebido += len(bloco)
+            if recebido > PARTE_MAX or atual + recebido > meta["tamanho"]:
+                f.truncate(atual)
+                raise HTTPException(413, "parte maior que o permitido")
+            f.write(bloco)
+    return {"recebido": atual + recebido, "tamanho": meta["tamanho"]}
+
+
+@app.post("/api/envios/{envio_id}/concluir")
+def concluir_envio(envio_id: str, background: BackgroundTasks, tipo: str = Form("auto"),
+                   plataforma: str = Form(""), area: str = Form(""), equipamento: str = Form(""),
+                   observacao: str = Form(""), u: dict = Usuario):
+    part, meta = _envio(envio_id, u)
+    if part.stat().st_size != meta["tamanho"]:
+        raise HTTPException(409, f"envio incompleto: {part.stat().st_size} de {meta['tamanho']} bytes")
+    doc_id = ingest.registrar_arquivo(part, meta["nome"], tipo=tipo, enviado_por=u["username"],
+                                      plataforma=plataforma or None, area=area or None,
+                                      equipamento=equipamento or None, observacao=observacao or None,
+                                      mover=True)
+    (ENVIOS_DIR / f"{envio_id}.json").unlink(missing_ok=True)
+    background.add_task(ingest.processar_documento, doc_id)
+    return {"ids": [doc_id]}
 
 
 # --------------------------------------------------------------------------- páginas e sessão

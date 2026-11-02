@@ -156,3 +156,49 @@ def test_apagar_duplicados(cli, tmp_path):
     assert restantes == {ids[0]: "ok", orfao: "duplicado"}
     assert not Path(caminhos[ids[1]]).exists() and Path(caminhos[ids[0]]).exists()
     assert cli.get("/api/duplicados").json()["quantidade"] == 0
+
+
+def test_envio_em_partes(cli):
+    import io
+    import zipfile
+
+    from app import config
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("34239-I-MLH-00272-0009/notas.txt", "malha 34239 tag PT-101")
+        zf.writestr("34239-I-MLH-00272-0009/ruido.bin", bytes(range(256)) * 200)
+    dados = buf.getvalue()
+    login(cli)
+    r = cli.post("/api/envios", json={"nome": "greendocs.zip", "tamanho": len(dados)})
+    assert r.status_code == 200
+    eid = r.json()["id"]
+    meio = len(dados) // 2
+    assert cli.put(f"/api/envios/{eid}?offset=0", content=dados[:meio]).json()["recebido"] == meio
+    # parte repetida (ex.: rede caiu depois de o servidor gravar): 409 com o ponto de retomada
+    rep = cli.put(f"/api/envios/{eid}?offset=0", content=dados[:meio])
+    assert rep.status_code == 409 and rep.json()["recebido"] == meio
+    assert cli.post(f"/api/envios/{eid}/concluir").status_code == 409  # ainda incompleto
+    assert cli.put(f"/api/envios/{eid}?offset={meio}", content=dados[meio:]).json()["recebido"] == len(dados)
+    r = cli.post(f"/api/envios/{eid}/concluir", data={"tipo": "auto"})
+    assert r.status_code == 200
+    doc_id = r.json()["ids"][0]
+    with db.session() as conn:
+        d = conn.execute("SELECT nome, status, sha256 FROM documentos WHERE id=?", (doc_id,)).fetchone()
+        filhos = [x["nome"] for x in conn.execute("SELECT nome FROM documentos WHERE pai_id=?", (doc_id,))]
+    import hashlib
+    assert d["nome"] == "greendocs.zip" and d["status"] == "ok"
+    assert d["sha256"] == hashlib.sha256(dados).hexdigest()
+    assert sorted(filhos) == ["notas.txt", "ruido.bin"]
+    assert cli.get(f"/api/envios/{eid}").status_code == 404  # concluído não pode ser reusado
+    assert cli.post("/api/envios", json={"nome": "x.zip", "tamanho": (config.MAX_UPLOAD_MB + 1) << 20}).status_code == 413
+
+
+def test_envio_em_partes_de_outro_usuario(cli):
+    login(cli)
+    eid = cli.post("/api/envios", json={"nome": "a.txt", "tamanho": 3}).json()["id"]
+    auth.criar_usuario("outro2", "outra-senha-longa")
+    c2 = TestClient(main.app)
+    c2.post("/api/login", json={"usuario": "outro2", "senha": "outra-senha-longa"})
+    assert c2.put(f"/api/envios/{eid}?offset=0", content=b"abc").status_code == 404
+    assert c2.put("/api/envios/..%2F..%2Fwia?offset=0", content=b"abc").status_code == 404
