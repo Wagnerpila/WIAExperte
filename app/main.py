@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 STATIC = Path(__file__).parent / "static"
 
 db.init_db()
+auth.garantir_admin_do_ambiente()
 app = FastAPI(title="WIA Expert", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(SessionMiddleware, secret_key=auth.carregar_secret(), session_cookie="wia_sessao",
                    max_age=12 * 3600, same_site="strict", https_only=config.COOKIE_SECURE)

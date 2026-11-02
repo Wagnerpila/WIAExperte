@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import threading
 import time
@@ -12,6 +13,7 @@ from fastapi import HTTPException, Request
 
 from . import config, db
 
+log = logging.getLogger("wia.auth")
 _N, _R, _P = 2 ** 14, 8, 1
 
 
@@ -31,13 +33,35 @@ def conferir_senha(senha: str, armazenado: str) -> bool:
         return False
 
 
+SENHA_MINIMA = 8
+
+
 def criar_usuario(username: str, senha: str, papel: str = "tecnico") -> None:
-    if len(senha) < 10:
-        raise ValueError("a senha precisa ter pelo menos 10 caracteres")
+    if not username.strip():
+        raise ValueError("informe o nome do usuário")
+    if len(senha) < SENHA_MINIMA:
+        raise ValueError(f"a senha precisa ter pelo menos {SENHA_MINIMA} caracteres")
     with db.session() as conn:
         conn.execute("INSERT INTO usuarios (username, hash, papel, criado_em) VALUES (?,?,?,?)"
                      " ON CONFLICT(username) DO UPDATE SET hash=excluded.hash, papel=excluded.papel",
                      (username.strip().lower(), hash_senha(senha), papel, db.agora()))
+
+
+def garantir_admin_do_ambiente() -> None:
+    """Cria ou atualiza o administrador definido em WIA_ADMIN_USUARIO / WIA_ADMIN_SENHA.
+
+    Roda a cada inicialização: trocar a senha no Ambiente do Easypanel e implantar de novo
+    redefine a senha desse usuário.
+    """
+    usuario = config.ADMIN_USUARIO.strip()
+    senha = config.ADMIN_SENHA
+    if not usuario and not senha:
+        return
+    try:
+        criar_usuario(usuario, senha, "admin")
+        log.info("administrador '%s' configurado pelo ambiente", usuario.lower())
+    except ValueError as e:
+        log.error("WIA_ADMIN_USUARIO/WIA_ADMIN_SENHA inválidos: %s", e)
 
 
 def autenticar(username: str, senha: str) -> dict | None:

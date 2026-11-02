@@ -41,6 +41,9 @@ USE_FALLBACKS = _bool("WIA_USE_FALLBACKS", True)
 DESCRIBE_IMAGES = _bool("WIA_DESCRIBE_IMAGES", True)
 
 SECRET_KEY = os.environ.get("WIA_SECRET_KEY", "")
+# Administrador criado/atualizado a cada inicialização (configurável pelo Ambiente do Easypanel).
+ADMIN_USUARIO = os.environ.get("WIA_ADMIN_USUARIO", "")
+ADMIN_SENHA = os.environ.get("WIA_ADMIN_SENHA", "")
 COOKIE_SECURE = _bool("WIA_COOKIE_SECURE", True)
 MAX_UPLOAD_MB = int(os.environ.get("WIA_MAX_UPLOAD_MB", "200"))
 

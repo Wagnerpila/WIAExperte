@@ -34,7 +34,7 @@ def main() -> None:
 
     a = ap.parse_args()
     if a.cmd == "criar-usuario":
-        senha = getpass.getpass("Senha (mín. 10 caracteres): ")
+        senha = getpass.getpass("Senha (mín. 8 caracteres): ")
         if senha != getpass.getpass("Repita a senha: "):
             raise SystemExit("as senhas não conferem")
         auth.criar_usuario(a.nome, senha, "admin" if a.admin else "tecnico")

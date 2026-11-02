@@ -108,3 +108,18 @@ def test_foto_no_chat_rejeita_outros_arquivos(cli):
     r = cli.post(f"/api/conversas/{cid}/mensagens", data={"texto": "veja"},
                  files=[("fotos", ("x.pdf", b"%PDF", "application/pdf"))])
     assert r.status_code == 400
+
+
+def test_admin_pelo_ambiente(monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "ADMIN_USUARIO", "Wagner")
+    monkeypatch.setattr(config, "ADMIN_SENHA", "senha-do-env")
+    auth.garantir_admin_do_ambiente()
+    assert auth.autenticar("wagner", "senha-do-env")["papel"] == "admin"
+    monkeypatch.setattr(config, "ADMIN_SENHA", "outra-senha")  # nova implantação redefine a senha
+    auth.garantir_admin_do_ambiente()
+    assert auth.autenticar("wagner", "senha-do-env") is None
+    assert auth.autenticar("WAGNER", "outra-senha")
+    monkeypatch.setattr(config, "ADMIN_SENHA", "curta")  # senha inválida não derruba o app
+    auth.garantir_admin_do_ambiente()
+    assert auth.autenticar("wagner", "outra-senha")
