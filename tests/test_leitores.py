@@ -5,7 +5,7 @@ from pathlib import Path
 
 import openpyxl
 
-from app import db, ingest, leitores
+from app import agent, db, ingest, leitores
 
 
 # --------------------------------------------------------------------------- código Klabin
@@ -204,3 +204,69 @@ def test_ingestao_planilha_klabin_com_ficha_e_duplicado(tmp_path):
         assert {r[0] for r in achados} == {doc_id}  # a cópia não foi indexada de novo
         dup = conn.execute("SELECT status, n_trechos, observacao FROM documentos WHERE id=?", (copia,)).fetchone()
     assert dup["status"] == "duplicado" and dup["n_trechos"] == 0 and f"#{doc_id}" in dup["observacao"]
+
+
+def test_duplicado_quando_original_ainda_processa(tmp_path):
+    # Envio em lotes: a cópia pode ser processada antes de o original terminar.
+    p = tmp_path / "34231-A-RED-00002-0001.txt"
+    p.write_text("arquitetura de rede MP28", encoding="utf-8")
+    original = ingest.registrar_arquivo(p, p.name)
+    copia = ingest.registrar_arquivo(p, "pasta/" + p.name)
+    ingest.processar_documento(copia)  # original ainda está 'processando'
+    ingest.processar_documento(original)
+    with db.session() as conn:
+        st = dict(conn.execute("SELECT id, status FROM documentos").fetchall())
+    assert st == {original: "ok", copia: "duplicado"}
+
+
+def _acentos_como_windows(z: Path, provisorio: str, real: str) -> None:
+    """Troca no binário um nome ASCII provisório pelo nome em cp850 sem a marca UTF-8, como faz o
+    Explorer do Windows (o zipfile do Python sempre gravaria UTF-8)."""
+    a, b = provisorio.encode("ascii"), real.encode("cp850")
+    assert len(a) == len(b)
+    z.write_bytes(z.read_bytes().replace(a, b))
+
+
+def test_zip_com_subpastas_zip_interno_e_acentos(tmp_path):
+    interno = tmp_path / "interno.zip"
+    with zipfile.ZipFile(interno, "w") as zf:
+        zf.writestr("folhas/34231-I-EQU-00120-0002.txt", "tag 34221RPU-30102-VT1")
+    externo = tmp_path / "34231-I-EQU-00120-0001.zip"
+    with zipfile.ZipFile(externo, "w") as zf:
+        zf.writestr("34231-I-EQU-00120-0001/Descri__o das medi__es.txt", "Prensa sucção MP28")
+        zf.write(interno, "34231-I-EQU-00120-0001/anexos/interno.zip")
+        zf.writestr("34231-I-EQU-00120-0001/Thumbs.db", b"lixo")
+        zf.writestr("__MACOSX/._x", b"lixo")
+    _acentos_como_windows(externo, "Descri__o das medi__es.txt", "Descrição das medições.txt")
+    zid = ingest.registrar_arquivo(externo, externo.name)
+    ingest.processar_documento(zid)
+    with db.session() as conn:
+        docs = {r["nome"]: dict(r) for r in conn.execute("SELECT * FROM documentos")}
+        assert set(docs) == {externo.name, "Descrição das medições.txt", "interno.zip",
+                             "34231-I-EQU-00120-0002.txt"}
+        assert all(d["status"] == "ok" for d in docs.values())
+        desc = docs["Descrição das medições.txt"]
+        assert desc["observacao"] == f"de {externo.name}, pasta 34231-I-EQU-00120-0001/"
+        neto = docs["34231-I-EQU-00120-0002.txt"]
+        assert neto["pai_id"] == docs["interno.zip"]["id"] and "pasta folhas/" in neto["observacao"]
+        achados = agent.t_buscar_base(conn, {"consulta": "34221RPU-30102-VT1"}, "t")["resultados"]
+        assert [r["nome"] for r in achados] == ["34231-I-EQU-00120-0002.txt"]
+        indice = agent.t_buscar_base(conn, {"consulta": "Descrição medições", "tipo": "outro"}, "t")
+        assert any(r["nome"] == externo.name for r in indice["resultados"])  # índice do conteúdo do zip
+
+
+def test_zip_com_senha_da_erro_claro(tmp_path):
+    z = tmp_path / "protegido.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("a.txt", "x")
+    dados = bytearray(z.read_bytes())
+    for marca in (b"PK\x03\x04", b"PK\x01\x02"):  # liga o bit de criptografia nos cabeçalhos
+        k = dados.find(marca)
+        off = k + (6 if marca == b"PK\x03\x04" else 8)
+        dados[off] |= 0x1
+    z.write_bytes(bytes(dados))
+    zid = ingest.registrar_arquivo(z, z.name)
+    ingest.processar_documento(zid)
+    with db.session() as conn:
+        d = conn.execute("SELECT status, erro FROM documentos WHERE id=?", (zid,)).fetchone()
+    assert d["status"] == "erro" and "senha" in d["erro"]

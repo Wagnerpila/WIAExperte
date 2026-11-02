@@ -114,6 +114,8 @@ prompts/system_prompt.md   prompt de sistema (v2 + seção de ferramentas)
 
 Importar uma pasta inteira de uma vez: `python -m app.cli importar "D:\\Backups\\Caldeira" --tipo backup --plataforma "Valmet DNA" --area "Caldeira de recuperação"`.
 
+Pela interface (aba Base) dá para mandar uma pasta inteira: botão "Escolher uma pasta inteira" ou arrastar a pasta para a área de envio. Todas as subpastas são percorridas, o lixo do Windows/Office (`Thumbs.db`, `desktop.ini`, `~$…`) é descartado e o envio vai em lotes de até 10 arquivos / 40 MB, com progresso e nova tentativa só dos lotes que falharem. Arquivos `.zip` (inclusive com subpastas e zip dentro de zip, até 4 níveis) são abertos no servidor; cada arquivo extraído guarda na observação de qual zip e subpasta veio, e o próprio zip vira um índice do seu conteúdo. Nomes com acento de zips do Windows são corrigidos; zip com senha dá erro explicando que precisa ser descompactado antes.
+
 Documentos com código Klabin no nome (ex. `34231-I-LIO-00117-0001.xlsx`) ganham uma ficha (máquina — 341xx = MP27, 342xx = MP28 —, área, disciplina, tipo) e um rótulo em cada trecho, e a área do documento é preenchida sozinha. Arquivos com conteúdo idêntico a um já indexado (ex.: o mesmo PDF solto e dentro de um `.zip`) ficam com status `duplicado` e não são indexados de novo. Para ler `.dwg` fora do Docker, instale a LibreDWG (`dwg2dxf` no PATH); sem ela o DWG fica `pendente` e pode ser reprocessado depois.
 
 ## Decisões técnicas

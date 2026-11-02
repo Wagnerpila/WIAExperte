@@ -462,30 +462,75 @@ def registrar_arquivo(origem: Path, nome: str, *, tipo: str = "auto", enviado_po
     return doc_id
 
 
-def _extrair_zip(conn_doc: dict, path: Path) -> list[int]:
-    """Extrai um .zip (ex.: export do WhatsApp com mídias) e registra cada arquivo como filho."""
-    filhos = []
+ZIP_MAX_ARQUIVOS = 5000
+ZIP_MAX_BYTES = 3 * 1024 ** 3      # total descompactado por .zip
+ZIP_MAX_PROFUNDIDADE = 4           # zip dentro de zip dentro de zip...
+_LIXO = re.compile(r"^(thumbs\.db|desktop\.ini|\.ds_store)$|^~\$|^\.", re.I)
+
+
+def _nome_membro(info: zipfile.ZipInfo) -> str:
+    """Nome do arquivo dentro do zip. Zips do Windows sem a marca UTF-8 usam a página de código
+    do sistema (cp850 no Brasil), que o Python lê como cp437: "Ã§" em vez de "ç"."""
+    if info.flag_bits & 0x800:
+        return info.filename
+    try:
+        return info.filename.encode("cp437").decode("cp850")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return info.filename
+
+
+def _profundidade_zip(doc_id: int) -> int:
+    n = 0
+    with db.session() as conn:
+        atual = conn.execute("SELECT pai_id FROM documentos WHERE id = ?", (doc_id,)).fetchone()
+        while atual and atual[0] and n < 50:
+            n += 1
+            atual = conn.execute("SELECT pai_id FROM documentos WHERE id = ?", (atual[0],)).fetchone()
+    return n
+
+
+def _extrair_zip(conn_doc: dict, path: Path) -> tuple[list[int], list[str]]:
+    """Extrai um .zip (com subpastas, zips internos etc.) e registra cada arquivo como filho.
+
+    Devolve (ids dos filhos, caminhos internos). O caminho da subpasta vai para a observação do
+    filho; o arquivo em disco só usa o nome (evita zip slip)."""
+    if _profundidade_zip(conn_doc["id"]) >= ZIP_MAX_PROFUNDIDADE:
+        raise ValueError(f"zip dentro de zip com mais de {ZIP_MAX_PROFUNDIDADE} níveis; não extraído")
+    filhos: list[int] = []
+    caminhos: list[str] = []
     pasta = path.with_suffix("")
     pasta.mkdir(exist_ok=True)
-    with zipfile.ZipFile(path) as z:
-        tem_chat = any(Path(i.filename).name.lower() in {"_chat.txt"} or "whatsapp" in i.filename.lower()
-                       for i in z.infolist())
-        for info in z.infolist():
-            if info.is_dir() or info.file_size == 0:
-                continue
-            nome = Path(info.filename).name  # descarta diretórios: evita zip slip
-            if not nome or nome.startswith("."):
-                continue
-            alvo = pasta / nome
-            with z.open(info) as src, alvo.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-            tipo = "whatsapp" if tem_chat and nome.lower().endswith(".txt") else "auto"
-            filhos.append(registrar_arquivo(alvo, nome, tipo=tipo, enviado_por=conn_doc["enviado_por"],
-                                            plataforma=conn_doc["plataforma"], area=conn_doc["area"],
-                                            equipamento=conn_doc["equipamento"], pai_id=conn_doc["id"],
-                                            mover=True))
-    shutil.rmtree(pasta, ignore_errors=True)
-    return filhos
+    try:
+        with zipfile.ZipFile(path) as z:
+            membros = [i for i in z.infolist() if not i.is_dir() and i.file_size > 0]
+            if any(i.flag_bits & 0x1 for i in membros):
+                raise ValueError("zip protegido por senha; descompacte e envie os arquivos")
+            if len(membros) > ZIP_MAX_ARQUIVOS:
+                raise ValueError(f"zip com {len(membros)} arquivos (limite {ZIP_MAX_ARQUIVOS})")
+            if sum(i.file_size for i in membros) > ZIP_MAX_BYTES:
+                raise ValueError(f"zip descompactado passa de {ZIP_MAX_BYTES // 1024 ** 3} GB")
+            tem_chat = any(Path(i.filename).name.lower() == "_chat.txt" or "whatsapp" in i.filename.lower()
+                           for i in membros)
+            for info in membros:
+                interno = _nome_membro(info).replace("\\", "/")
+                partes = [x for x in interno.split("/") if x and x not in (".", "..")]
+                if not partes or partes[0] == "__MACOSX" or _LIXO.search(partes[-1]):
+                    continue
+                nome = partes[-1]
+                subpasta = "/".join(partes[:-1])
+                alvo = pasta / f"{len(filhos):05d}_{re.sub(r'[^A-Za-z0-9._-]+', '_', nome)}"
+                with z.open(info) as src, alvo.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                tipo = "whatsapp" if tem_chat and nome.lower().endswith(".txt") else "auto"
+                obs = f"de {conn_doc['nome']}" + (f", pasta {subpasta}/" if subpasta else "")
+                filhos.append(registrar_arquivo(alvo, nome, tipo=tipo, enviado_por=conn_doc["enviado_por"],
+                                                plataforma=conn_doc["plataforma"], area=conn_doc["area"],
+                                                equipamento=conn_doc["equipamento"], observacao=obs,
+                                                pai_id=conn_doc["id"], mover=True))
+                caminhos.append("/".join(partes))
+    finally:
+        shutil.rmtree(pasta, ignore_errors=True)
+    return filhos, caminhos
 
 
 def _transcrever_audio(path: Path) -> str | None:
@@ -543,9 +588,11 @@ def processar_documento(doc_id: int) -> None:
         trechos: list[tuple[str, str, str | None]] = []
         with db.session() as conn:
             dup = conn.execute(
+                # Um original mais antigo ainda em processamento também conta (envio em lotes paralelos).
                 "SELECT id, nome FROM documentos WHERE sha256 = ? AND id != ?"
-                " AND status NOT IN ('erro', 'duplicado', 'processando') ORDER BY id LIMIT 1",
-                (doc["sha256"], doc_id)).fetchone()
+                " AND (status NOT IN ('erro', 'duplicado', 'processando') OR (status = 'processando' AND id < ?))"
+                " ORDER BY id LIMIT 1",
+                (doc["sha256"], doc_id, doc_id)).fetchone()
 
         if dup:
             # Mesmo conteúdo já indexado (ex.: arquivo solto + o mesmo dentro de um .zip): não repete
@@ -553,8 +600,10 @@ def processar_documento(doc_id: int) -> None:
             status = "duplicado"
             observ = f"conteúdo idêntico ao documento #{dup['id']} ({dup['nome']}); não indexado de novo"
         elif ext == ".zip":
-            filhos = _extrair_zip(doc, path)
-            trechos = [(f"Arquivo compactado com {len(filhos)} arquivos.", "zip", None)]
+            filhos, caminhos = _extrair_zip(doc, path)
+            # Índice do conteúdo: a busca pelo nome de um arquivo também acha o zip de onde ele veio.
+            trechos = trechos_de_linhas(f"ARQUIVO COMPACTADO {doc['nome']} com {len(filhos)} arquivos:\n"
+                                        + "\n".join(caminhos), "conteúdo do zip, linhas")
         elif doc["tipo"] == "alarmes":
             texto = leitores.planilha_para_csv(path) if ext in EXT_PLANILHA else ler_texto(path)
             with db.session() as conn:
@@ -638,6 +687,9 @@ def processar_documento(doc_id: int) -> None:
     except Exception as e:  # registra o erro no documento
         log.exception("falha ao processar documento %s", doc_id)
         status, erro = "erro", f"{type(e).__name__}: {e}"[:500]
+    origem = (doc.get("observacao") or "").split(" · ")[0]
+    if observ and origem.startswith("de ") and doc.get("pai_id"):
+        observ = f"{origem} · {observ}"  # mantém "de X.zip, pasta Y/" junto do aviso do processamento
     with db.session() as conn:
         conn.execute("UPDATE documentos SET status = ?, erro = ?, observacao = COALESCE(?, observacao)"
                      " WHERE id = ?", (status, erro, observ, doc_id))

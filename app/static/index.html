@@ -90,10 +90,12 @@
       <div class="cartao pilha">
         <h2>Enviar para a base</h2>
         <div class="zona-upload" id="zona-upload" tabindex="0" role="button">
-          <strong>Arraste arquivos aqui</strong> ou clique para escolher<br>
-          <span class="small muted">PDF, TXT/LOG/CSV, exportações de CLP (SCL, AWL, XML, L5X…), fotos, áudios, .zip do WhatsApp, backups binários (.ap17, .stu, .acd…)</span>
+          <strong>Arraste arquivos ou pastas aqui</strong> ou clique para escolher arquivos<br>
+          <span class="small muted">PDF, planilhas (XLSX/XLS), desenhos (DWG/DXF/VSDX), TXT/LOG/CSV, exportações de CLP (SCL, AWL, XML, L5X…), fotos, áudios, .zip, backups binários (.ap17, .stu, .acd…). Pastas são lidas com todas as subpastas.</span>
           <input type="file" id="arquivos" multiple hidden>
+          <input type="file" id="pasta" webkitdirectory multiple hidden>
         </div>
+        <div><button class="btn" id="btn-escolher-pasta" type="button">📁 Escolher uma pasta inteira</button></div>
         <div id="lista-envio" class="small"></div>
         <div class="campos">
           <div>

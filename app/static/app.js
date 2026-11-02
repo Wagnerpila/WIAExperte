@@ -348,34 +348,109 @@
   window.addEventListener("resize", () => { clearTimeout(tRedim); tRedim = setTimeout(() => { if (estado.abaAtual === "painel") $$(".grafico").forEach((c) => c._render && c._render()); }, 200); });
 
   // ------------------------------------------------------------------ base
-  const zona = $("#zona-upload"), inputArq = $("#arquivos");
-  let selecionados = [];
-  function atualizarSelecao(files) {
-    selecionados = Array.from(files);
-    $("#lista-envio").textContent = selecionados.length ? `${selecionados.length} arquivo(s): ${selecionados.map((f) => f.name).join(", ")}` : "";
+  const zona = $("#zona-upload"), inputArq = $("#arquivos"), inputPasta = $("#pasta");
+  let selecionados = [];  // [{ file, caminho }]
+  // Lixo que o Windows/Office deixa nas pastas: não vai para a base.
+  const ehLixo = (nome) => /^(thumbs\.db|desktop\.ini|\.ds_store)$/i.test(nome) || nome.startsWith("~$") || nome.startsWith(".");
+
+  function atualizarSelecao(itens) {
+    const vistos = new Set();
+    selecionados = itens.filter((it) => {
+      const chave = it.caminho + "|" + it.file.size;
+      if (ehLixo(it.file.name) || vistos.has(chave)) return false;
+      vistos.add(chave); return true;
+    });
+    const box = $("#lista-envio");
     $("#btn-enviar-arquivos").disabled = !selecionados.length;
+    if (!selecionados.length) { box.textContent = ""; return; }
+    const total = selecionados.reduce((s, it) => s + it.file.size, 0);
+    const pastas = new Set(selecionados.map((it) => it.caminho.split("/").slice(0, -1).join("/")).filter(Boolean));
+    const porExt = {};
+    selecionados.forEach((it) => { const m = it.file.name.match(/\.([^.]+)$/); const e = m ? m[1].toLowerCase() : "(sem extensão)"; porExt[e] = (porExt[e] || 0) + 1; });
+    const exts = Object.entries(porExt).sort((a, b) => b[1] - a[1]).map(([e, n]) => `${n} ${e}`).join(" · ");
+    const nomes = selecionados.slice(0, 8).map((it) => it.caminho).join(", ") + (selecionados.length > 8 ? `, … (+${selecionados.length - 8})` : "");
+    box.innerHTML = `<strong>${num(selecionados.length)} arquivo(s)</strong>${pastas.size ? ` em ${num(pastas.size)} pasta(s)` : ""}, ${bytes(total)} — ${esc(exts)}<br><span class="muted">${esc(nomes)}</span>`;
   }
+  const deLista = (files) => Array.from(files).map((f) => ({ file: f, caminho: f.webkitRelativePath || f.name }));
+
+  // Arrastar pastas: percorre as subpastas pela API de entradas do navegador.
+  function lerEntrada(entrada, prefixo, saida) {
+    return new Promise((resolve) => {
+      if (entrada.isFile) {
+        entrada.file((f) => { saida.push({ file: f, caminho: prefixo + f.name }); resolve(); }, () => resolve());
+        return;
+      }
+      if (!entrada.isDirectory) { resolve(); return; }
+      const leitor = entrada.createReader();
+      const filhos = [];
+      const lote = () => leitor.readEntries(async (ents) => {  // devolve no máximo ~100 por chamada
+        if (ents.length) { filhos.push(...ents); lote(); return; }
+        for (const f of filhos) await lerEntrada(f, prefixo + entrada.name + "/", saida);
+        resolve();
+      }, () => resolve());
+      lote();
+    });
+  }
+
   zona.addEventListener("click", () => inputArq.click());
   zona.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputArq.click(); } });
-  inputArq.addEventListener("change", () => atualizarSelecao(inputArq.files));
+  $("#btn-escolher-pasta").addEventListener("click", () => inputPasta.click());
+  inputArq.addEventListener("change", () => atualizarSelecao(deLista(inputArq.files)));
+  inputPasta.addEventListener("change", () => atualizarSelecao(deLista(inputPasta.files)));
   ["dragenter", "dragover"].forEach((ev) => zona.addEventListener(ev, (e) => { e.preventDefault(); zona.classList.add("arrastando"); }));
   ["dragleave", "drop"].forEach((ev) => zona.addEventListener(ev, (e) => { e.preventDefault(); zona.classList.remove("arrastando"); }));
-  zona.addEventListener("drop", (e) => atualizarSelecao(e.dataTransfer.files));
+  zona.addEventListener("drop", async (e) => {
+    const entradas = Array.from(e.dataTransfer.items || []).map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+    if (!entradas.length) { atualizarSelecao(deLista(e.dataTransfer.files)); return; }
+    $("#lista-envio").textContent = "Lendo as pastas…";
+    const itens = [];
+    for (const en of entradas) await lerEntrada(en, "", itens);
+    atualizarSelecao(itens);
+  });
+
+  // Envia em lotes (até 10 arquivos ou ~40 MB por requisição) para não estourar tempo nem memória.
+  function lotes(itens) {
+    const out = []; let atual = [], tam = 0;
+    for (const it of itens) {
+      if (atual.length && (atual.length >= 10 || tam + it.file.size > 40 * (1 << 20))) { out.push(atual); atual = []; tam = 0; }
+      atual.push(it); tam += it.file.size;
+    }
+    if (atual.length) out.push(atual);
+    return out;
+  }
 
   $("#btn-enviar-arquivos").addEventListener("click", async () => {
-    const bt = $("#btn-enviar-arquivos");
-    bt.disabled = true; bt.textContent = "Enviando…";
-    try {
-      const fd = new FormData();
-      selecionados.forEach((f) => fd.append("arquivos", f));
-      fd.append("tipo", $("#up-tipo").value);
-      ["plataforma", "area", "equipamento"].forEach((k) => fd.append(k, $("#up-" + k).value));
-      fd.append("observacao", $("#up-obs").value);
-      await api("/api/documentos", { method: "POST", body: fd });
-      atualizarSelecao([]); inputArq.value = ""; $("#up-obs").value = "";
-      carregarDocs();
-    } catch (e) { alertaInline($("#lista-envio"), e.message); }
-    finally { bt.textContent = "Enviar"; bt.disabled = !selecionados.length; }
+    const bt = $("#btn-enviar-arquivos"), box = $("#lista-envio");
+    const itens = selecionados.slice(), grupos = lotes(itens);
+    bt.disabled = true;
+    let enviados = 0;
+    const falhas = [], naoEnviados = [];
+    for (const [i, grupo] of grupos.entries()) {
+      bt.textContent = `Enviando ${num(enviados)}/${num(itens.length)}…`;
+      box.textContent = `Lote ${i + 1} de ${grupos.length}: ${grupo.map((it) => it.file.name).join(", ")}`;
+      try {
+        const fd = new FormData();
+        grupo.forEach((it) => fd.append("arquivos", it.file, it.file.name));
+        fd.append("tipo", $("#up-tipo").value);
+        ["plataforma", "area", "equipamento"].forEach((k) => fd.append(k, $("#up-" + k).value));
+        fd.append("observacao", $("#up-obs").value);
+        await api("/api/documentos", { method: "POST", body: fd });
+        enviados += grupo.length;
+      } catch (e) { falhas.push(`${grupo.map((it) => it.caminho).join(", ")}: ${e.message}`); naoEnviados.push(...grupo); }
+      if (i % 3 === 2) carregarDocs();
+    }
+    bt.textContent = "Enviar";
+    inputArq.value = ""; inputPasta.value = "";
+    if (falhas.length) {
+      selecionados = naoEnviados;
+      box.innerHTML = `<span style="color:var(--critical)">${num(enviados)} enviado(s); falharam ${falhas.length} lote(s) — clique em Enviar para tentar de novo:<br>${falhas.map(esc).join("<br>")}</span>`;
+      bt.disabled = false;
+    } else {
+      selecionados = []; $("#up-obs").value = "";
+      box.textContent = `${num(enviados)} arquivo(s) enviados. O processamento continua no servidor; acompanhe o status na lista abaixo.`;
+      bt.disabled = true;
+    }
+    carregarDocs();
   });
   function alertaInline(el, msg) { el.innerHTML = `<span style="color:var(--critical)">${esc(msg)}</span>`; }
 
