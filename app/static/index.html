@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WIA Expert</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" defer></script>
+  <script src="/static/graficos.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+
+<!-- ======================= LOGIN -->
+<section id="tela-login" class="hidden">
+  <form class="cartao pilha" id="form-login">
+    <div>
+      <h2>WIA Expert</h2>
+      <div class="muted small">Assistente de Automação e Instrumentação</div>
+    </div>
+    <div><label for="login-usuario">Usuário</label><input type="text" id="login-usuario" autocomplete="username" required></div>
+    <div><label for="login-senha">Senha</label><input type="password" id="login-senha" autocomplete="current-password" required></div>
+    <div class="erro small" id="login-erro" role="alert"></div>
+    <button class="btn primario" type="submit">Entrar</button>
+  </form>
+</section>
+
+<!-- ======================= APP -->
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="marca">WIA Expert <span>· Automação</span></div>
+    <nav class="abas" role="tablist">
+      <button role="tab" data-aba="chat" aria-selected="true">Chat</button>
+      <button role="tab" data-aba="painel" aria-selected="false">Painel</button>
+      <button role="tab" data-aba="base" aria-selected="false">Base</button>
+      <button role="tab" data-aba="ocorrencias" aria-selected="false">Ocorrências</button>
+      <button role="tab" data-aba="glossario" aria-selected="false">Glossário e notas</button>
+    </nav>
+    <div class="usuario">
+      <span class="nome muted small" id="nome-usuario"></span>
+      <button class="btn mini" id="btn-tema" title="Alternar tema claro/escuro">Tema</button>
+      <button class="btn mini" id="btn-sair">Sair</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ---------- CHAT -->
+    <section id="aba-chat" data-painel="chat">
+      <aside class="cartao" id="lista-conversas" aria-label="Conversas">
+        <button class="btn primario" id="btn-nova" style="width:100%;margin-bottom:8px">+ Nova conversa</button>
+        <div id="conversas"></div>
+      </aside>
+      <div class="cartao chat-coluna">
+        <div style="display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)">
+          <button class="btn mini btn-conversas" id="btn-mostrar-conversas">Conversas</button>
+          <strong id="titulo-conversa" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Nova conversa</strong>
+        </div>
+        <div id="mensagens" aria-live="polite"></div>
+        <div id="previa-fotos"></div>
+        <form id="form-chat">
+          <label class="btn" title="Anexar foto (câmera ou galeria)" style="margin:0">
+            📷<input type="file" id="fotos" accept="image/*" capture="environment" multiple hidden>
+          </label>
+          <textarea id="texto" rows="1" placeholder="Descreva o problema: equipamento, tag, horário, o que a operação viu…" aria-label="Mensagem"></textarea>
+          <button class="btn primario" type="submit" id="btn-enviar">Enviar</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ---------- PAINEL -->
+    <section id="aba-painel" data-painel="painel" class="hidden pilha">
+      <div class="filtros">
+        <h2 style="margin-right:auto">Painel</h2>
+        <span class="muted small" id="painel-gerado"></span>
+        <div class="segmentado" id="periodo" role="group" aria-label="Período">
+          <button data-dias="7">7 dias</button>
+          <button data-dias="30">30 dias</button>
+          <button data-dias="90" aria-pressed="true">90 dias</button>
+          <button data-dias="365">12 meses</button>
+          <button data-dias="0">Tudo</button>
+        </div>
+        <button class="btn" id="btn-atualizar-painel">Atualizar</button>
+      </div>
+      <div id="painel-conteudo"></div>
+    </section>
+
+    <!-- ---------- BASE -->
+    <section id="aba-base" data-painel="base" class="hidden pilha">
+      <div class="cartao pilha">
+        <h2>Enviar para a base</h2>
+        <div class="zona-upload" id="zona-upload" tabindex="0" role="button">
+          <strong>Arraste arquivos aqui</strong> ou clique para escolher<br>
+          <span class="small muted">PDF, TXT/LOG/CSV, exportações de CLP (SCL, AWL, XML, L5X…), fotos, áudios, .zip do WhatsApp, backups binários (.ap17, .stu, .acd…)</span>
+          <input type="file" id="arquivos" multiple hidden>
+        </div>
+        <div id="lista-envio" class="small"></div>
+        <div class="campos">
+          <div>
+            <label for="up-tipo">Tipo</label>
+            <select id="up-tipo">
+              <option value="auto">Detectar automaticamente</option>
+              <option value="documentacao">Documentação / manual / P&amp;ID</option>
+              <option value="backup">Backup / exportação de programa</option>
+              <option value="log">Log / histórico / tendência</option>
+              <option value="whatsapp">Conversa de WhatsApp (.txt, .zip, JSON do WAHA)</option>
+              <option value="alarmes">CSV de alarmes/eventos (gera indicadores ISA-18.2)</option>
+              <option value="ocorrencias">CSV de ocorrências históricas</option>
+              <option value="foto">Foto</option>
+              <option value="audio">Áudio</option>
+              <option value="video">Vídeo</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div><label for="up-plataforma">Plataforma</label><input type="text" id="up-plataforma" list="plataformas" placeholder="ex.: Valmet DNA"></div>
+          <div><label for="up-area">Área</label><input type="text" id="up-area" list="areas" placeholder="ex.: Caldeira de recuperação"></div>
+          <div><label for="up-equipamento">Equipamento / controlador / tag</label><input type="text" id="up-equipamento" placeholder="ex.: ACN 12, CLP Picador 2"></div>
+          <div class="largo"><label for="up-obs">Observação (vai junto para a busca e para a descrição da foto)</label><input type="text" id="up-obs" placeholder="ex.: backup após troca de cartão, 01/11"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn primario" id="btn-enviar-arquivos" disabled>Enviar</button>
+          <span class="small muted">Modelos de CSV: <a href="/static/modelos/ocorrencias_modelo.csv" download>ocorrências</a> · <a href="/static/modelos/alarmes_modelo.csv" download>alarmes</a></span>
+        </div>
+      </div>
+      <div class="cartao pilha">
+        <div class="filtros">
+          <h2 style="margin-right:auto">Documentos</h2>
+          <input type="text" id="filtro-docs" placeholder="Filtrar por nome, área, equipamento…" style="max-width:280px">
+          <select id="filtro-tipo" style="max-width:200px"><option value="">Todos os tipos</option></select>
+        </div>
+        <div class="tabela-wrap" id="tabela-docs"></div>
+      </div>
+    </section>
+
+    <!-- ---------- OCORRÊNCIAS -->
+    <section id="aba-ocorrencias" data-painel="ocorrencias" class="hidden pilha">
+      <details class="cartao">
+        <summary><strong>Registrar ocorrência manualmente</strong> <span class="muted small">(o assistente também registra ao fim de um diagnóstico, com sua confirmação)</span></summary>
+        <form id="form-ocorrencia" class="campos" style="margin-top:12px">
+          <div><label>Data/hora do início *</label><input type="datetime-local" name="data_hora" required></div>
+          <div><label>Equipamento *</label><input type="text" name="equipamento" required></div>
+          <div><label>Tag</label><input type="text" name="tag"></div>
+          <div><label>Área</label><input type="text" name="area" list="areas"></div>
+          <div><label>Plataforma</label><input type="text" name="plataforma" list="plataformas"></div>
+          <div><label>Categoria da causa</label><input type="text" name="categoria_causa" list="categorias"></div>
+          <div><label>Tempo de parada (min)</label><input type="number" name="tempo_parada_min" min="0" step="any"></div>
+          <div class="largo"><label>Sintoma *</label><textarea name="sintoma" rows="2" required></textarea></div>
+          <div class="largo"><label>Causa raiz</label><textarea name="causa_raiz" rows="2"></textarea></div>
+          <div class="largo"><label>Ação tomada</label><textarea name="acao" rows="2"></textarea></div>
+          <div class="largo"><label>Blocos / parâmetros envolvidos</label><input type="text" name="blocos_parametros"></div>
+          <div class="largo"><label>Lição aprendida</label><textarea name="licao" rows="2"></textarea></div>
+          <div class="largo"><button class="btn primario" type="submit">Salvar ocorrência</button></div>
+        </form>
+      </details>
+      <div class="cartao pilha">
+        <div class="filtros"><h2 style="margin-right:auto">Histórico de ocorrências</h2>
+          <input type="text" id="filtro-oc" placeholder="Filtrar…" style="max-width:280px"></div>
+        <div class="tabela-wrap" id="tabela-oc"></div>
+      </div>
+    </section>
+
+    <!-- ---------- GLOSSÁRIO E NOTAS -->
+    <section id="aba-glossario" data-painel="glossario" class="hidden pilha">
+      <div class="cartao pilha">
+        <h2>Glossário da planta</h2>
+        <form id="form-termo" class="campos">
+          <div><label>Termo / apelido / sigla</label><input type="text" name="termo" required></div>
+          <div style="grid-column: span 2"><label>Significado</label><input type="text" name="significado" required></div>
+          <div style="align-self:end"><button class="btn primario" type="submit">Salvar termo</button></div>
+        </form>
+        <div class="tabela-wrap" id="tabela-glossario"></div>
+      </div>
+      <div class="cartao pilha">
+        <h2>Notas</h2>
+        <form id="form-nota" class="campos">
+          <div><label>Equipamento / tag / área</label><input type="text" name="alvo" required></div>
+          <div style="grid-column: span 2"><label>Nota</label><input type="text" name="texto" required></div>
+          <div style="align-self:end"><button class="btn primario" type="submit">Salvar nota</button></div>
+        </form>
+        <div class="tabela-wrap" id="tabela-notas"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<datalist id="plataformas">
+  <option value="Valmet DNA"><option value="Valmet DNAe"><option value="Siemens S7-1500"><option value="Siemens S7-1200">
+  <option value="Siemens S7-300"><option value="Siemens S7-400"><option value="Siemens PCS 7"><option value="SINAMICS">
+  <option value="Schneider M580"><option value="Schneider M340"><option value="Schneider M241/M251"><option value="Altivar">
+  <option value="ABB"><option value="Rockwell / Allen-Bradley"><option value="Instrumentação"><option value="Rede / PROFINET">
+</datalist>
+<datalist id="areas">
+  <option value="Caldeira de recuperação"><option value="Caldeira de força"><option value="Digestor"><option value="Evaporação">
+  <option value="Caustificação"><option value="Forno de cal"><option value="Preparação de massa"><option value="Máquina de papel">
+  <option value="Pátio de madeira / picagem"><option value="Branqueamento"><option value="Utilidades"><option value="Tratamento de efluentes">
+</datalist>
+<datalist id="categorias">
+  <option value="instrumento"><option value="elétrica"><option value="mecânica"><option value="rede/comunicação">
+  <option value="lógica/programa"><option value="hardware de controle"><option value="alimentação/fonte"><option value="processo">
+  <option value="operação"><option value="desconhecida">
+</datalist>
+
+<dialog id="dialogo">
+  <div class="cab"><strong id="dialogo-titulo"></strong><button class="btn mini" id="dialogo-fechar">Fechar</button></div>
+  <div class="conteudo" id="dialogo-conteudo"></div>
+</dialog>
+<div class="tooltip hidden" id="tooltip" role="status"></div>
+</body>
+</html>

@@ -1,0 +1,9 @@
+anthropic==2.3.0
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.33
+itsdangerous==2.2.0
+pypdf==6.21.4
+pillow==13.0.0
+# Opcional: transcrição local de áudio (pesado; ~1 GB com o modelo "small")
+# faster-whisper

@@ -1,0 +1,15 @@
+# HTTPS automático (Let's Encrypt) para o domínio em WIA_DOMINIO.
+{$WIA_DOMINIO} {
+	encode gzip
+	request_body {
+		max_size 210MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+	}
+	reverse_proxy app:8000 {
+		transport http {
+			read_timeout 15m
+		}
+	}
+}

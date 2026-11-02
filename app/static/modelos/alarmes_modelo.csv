@@ -1,0 +1,3 @@
+data_hora;tag;mensagem;prioridade;estado;area
+2026-10-15 08:40:12;EXEMPLO-001;Exemplo - apague estas linhas;alta;ativo;Área exemplo
+2026-10-15 08:52:30;EXEMPLO-001;Exemplo - apague estas linhas;alta;normal;Área exemplo

@@ -1,0 +1,2 @@
+data_hora;equipamento;tag;area;plataforma;sintoma;causa_raiz;categoria_causa;acao;tempo_parada_min;licao
+2026-10-15 08:40;Exemplo - apague esta linha;FIC-0000;Área exemplo;Valmet DNA;Descreva o sintoma;Descreva a causa raiz;instrumento;Descreva a ação;45;Descreva a lição aprendida
